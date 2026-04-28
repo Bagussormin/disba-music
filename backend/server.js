@@ -8,17 +8,26 @@ import crypto from 'crypto';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+
+// Use FRONTEND_URL from env for CORS, fallback to localhost for dev
+const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+
+app.use(cors({
+  origin: [frontendUrl, 'http://localhost:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 // Load Config from .env or fallback
-const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY || 'SB-Mid-server-YOUR_SERVER_KEY';
+const MIDTRANS_SERVER_KEY = process.env.MIDTRANS_SERVER_KEY;
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Verify Supabase keys
-if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.warn("⚠️ Warning: Supabase URL/Key is missing. Database operations will fail.");
+// Verify required keys
+if (!MIDTRANS_SERVER_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+  console.warn("⚠️ Warning: Missing required environment variables (MIDTRANS_SERVER_KEY, VITE_SUPABASE_URL, or SUPABASE_SERVICE_ROLE_KEY).");
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
@@ -27,8 +36,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const snap = new midtransClient.Snap({
   isProduction: process.env.VITE_MIDTRANS_IS_PRODUCTION === 'true',
   serverKey: MIDTRANS_SERVER_KEY,
-  clientKey: process.env.VITE_MIDTRANS_CLIENT_KEY || 'SB-Mid-client-YOUR_CLIENT_KEY'
+  clientKey: process.env.VITE_MIDTRANS_CLIENT_KEY
 });
+
 
 // Endpoint: Generate Snap Token
 app.post('/api/checkout', async (req, res) => {
@@ -136,5 +146,5 @@ app.post('/api/midtrans-webhook', async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Dedicated backend server running on http://localhost:${PORT}`);
+  console.log(`🚀 Dedicated backend server running on port ${PORT}`);
 });
