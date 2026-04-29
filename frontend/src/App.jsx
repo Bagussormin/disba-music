@@ -1,13 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useEffectEvent } from 'react'
 import { supabase } from './supabase'
 import { 
   Disc3, LogOut, ChevronRight, Check, DollarSign, Globe, Activity, Globe2, ShieldCheck, 
-  Trash2, Plus, Users, LayoutDashboard, Music, Package, Wallet, History, CreditCard,
+  Trash2, Plus, Users, LayoutDashboard, Music, Package, Wallet, History,
   Zap, Mail, Globe as GlobeIcon, Sparkles as SparklesIcon, LogOut as LogOutIcon,
   Sparkles, UploadCloud, Pause, Play, Settings, ArrowRightCircle
 } from 'lucide-react';
 import LandingPage from './components/LandingPage';
-import { generateISRC, generateUPC } from './utils/musicHelpers';
 import logo from './assets/logo-disba.png';
 
 function App() {
@@ -33,14 +32,19 @@ function App() {
   const [showLogin, setShowLogin] = useState(false) 
   const [isAdminPortal, setIsAdminPortal] = useState(false) 
   const [adminClickCount, setAdminClickCount] = useState(0)
-  const [showPaymentModal, setShowPaymentModal] = useState(false) // Midtrans Simulation UI
-  const [paymentDetails, setPaymentDetails] = useState({ title: '', price: 0, type: '' })
   const [playingTrackId, setPlayingTrackId] = useState(null)
   const [selectedUserForManage, setSelectedUserForManage] = useState(null)
 
   // Auth States
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  const syncSession = useEffectEvent(async (nextSession) => {
+    setSession(nextSession)
+    if (nextSession) {
+      await fetchData(nextSession.user.id, nextSession.access_token)
+    }
+  })
 
   useEffect(() => {
     // Inject Midtrans Snap script
@@ -53,8 +57,8 @@ function App() {
     scriptTag.setAttribute('data-client-key', import.meta.env.VITE_MIDTRANS_CLIENT_KEY || 'SB-Mid-client-YOUR_CLIENT_KEY');
     document.body.appendChild(scriptTag);
 
-    supabase.auth.getSession().then(({ data: { session } }) => handleSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => handleSession(session))
+    supabase.auth.getSession().then(({ data: { session } }) => syncSession(session))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => syncSession(nextSession))
     
     // Secret Admin Path Detection (Hash and Query Param)
     const checkAdminPath = () => {
@@ -73,40 +77,54 @@ function App() {
       subscription.unsubscribe();
       window.removeEventListener('hashchange', checkAdminPath);
     };
-  }, [])
+  }, [syncSession])
 
-  const handleSession = async (session) => {
-    setSession(session)
-    if (session) {
-      await fetchData(session.user.id)
+  const apiRequest = async (path, options = {}, accessToken = session?.access_token) => {
+    if (!accessToken) {
+      throw new Error('Sesi login tidak ditemukan.');
     }
+
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {})
+    };
+
+    const response = await fetch(`${apiUrl}${path}`, {
+      ...options,
+      headers
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || 'Permintaan ke server gagal.');
+    }
+
+    return payload;
   }
 
-  const fetchData = async (userId) => {
+  const fetchData = async (userId, accessToken = session?.access_token) => {
     setLoadingData(true)
     const { data: profData } = await supabase.from('profiles').select('*').eq('id', userId).single()
     const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'free' }
-    
-    // Emergency Recovery for Owner
-    if (p.email === 'bagus.arifianto29@gmail.com') p.role = 'admin';
-    
+
     setProfile(p)
 
-    // Global Stats and Data for Admins
-    if (p.role === 'admin') {
-      const { data: users } = await supabase.from('profiles').select('*').order('created_at', { ascending: false })
-      setAllUsers(users || [])
-      
-      const { data: releases } = await supabase.from('releases').select('*').order('created_at', { ascending: false })
-      setAllReleases(releases || [])
-      
-      const { data: trans } = await supabase.from('transactions').select('*').order('created_at', { ascending: false })
-      setAllTransactions(trans || [])
-
-      const { data: roys } = await supabase.from('royalties_ledger').select('*, releases(title)').order('created_at', { ascending: false })
-      setAllRoyalties(roys || [])
+    if (p.role === 'admin' && accessToken) {
+      try {
+        const dashboard = await apiRequest('/api/admin/dashboard', {}, accessToken)
+        setAllUsers(dashboard.users || [])
+        setAllReleases(dashboard.releases || [])
+        setAllTransactions(dashboard.transactions || [])
+        setAllRoyalties(dashboard.royalties || [])
+      } catch (error) {
+        alert(error.message)
+        setAllUsers([])
+        setAllReleases([])
+        setAllTransactions([])
+        setAllRoyalties([])
+      }
     } else {
-      // Scoped Data for Artists
       const { data: releases } = await supabase.from('releases').select('*').eq('user_id', userId).order('created_at', { ascending: false })
       setAllReleases(releases || [])
 
@@ -144,12 +162,16 @@ function App() {
   }
 
   const handleUpdateUser = async (userId, updates) => {
-     const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
-     if (error) alert("❌ Error updating user: " + error.message);
-     else {
+     try {
+        await apiRequest(`/api/admin/users/${userId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(updates)
+        });
         alert("✅ User management updated successfully.");
         fetchData(session.user.id);
         setSelectedUserForManage(null);
+     } catch (error) {
+        alert("❌ Error updating user: " + error.message);
      }
   }
 
@@ -168,33 +190,23 @@ function App() {
     if (error) alert(error.message);
   }
 
-  const handleMidtransPayment = async () => {
+  const handleMidtransPayment = async (purchaseType = 'subscription') => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-      const response = await fetch(`${apiUrl}/api/checkout`, {
+      const data = await apiRequest('/api/checkout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          gross_amount: 50000,
-          customer_details: {
-            first_name: profile?.full_name || 'Artist',
-            email: profile?.email || session?.user?.email
-          },
-          user_id: session?.user?.id
-        })
+        body: JSON.stringify({ purchase_type: purchaseType })
       });
-      
-      const data = await response.json();
-      
+
       if (data.token && window.snap) {
         window.snap.pay(data.token, {
-          onSuccess: function(result){
-            alert("✅ Pembayaran berhasil!");
+          onSuccess: function(){
+            alert("✅ Pembayaran berhasil diproses. Status akun akan diperbarui setelah webhook dari Midtrans masuk.");
+            fetchData(session.user.id);
           },
-          onPending: function(result){
+          onPending: function(){
             alert("⏳ Menunggu pembayaran Anda...");
           },
-          onError: function(result){
+          onError: function(){
             alert("❌ Pembayaran gagal dilakukan.");
           },
           onClose: function(){
@@ -220,18 +232,10 @@ function App() {
 
     const confirm = window.confirm(`Cairkan saldo sebesar Rp ${profile.wallet_balance.toLocaleString('id-ID')}?`)
     if (confirm) {
-      const amountToWithdraw = profile.wallet_balance;
-      // 1. Transaction status is 'pending'
-      const { error } = await supabase.from('transactions').insert([{ 
-        user_id: session.user.id, type: 'withdrawal', amount: amountToWithdraw, status: 'pending' 
-      }])
-      
-      if (!error) {
-        // 2. Subtract balance recorded to prevent race conditions
-        const finalBalance = Math.max(0, (profile.wallet_balance || 0) - amountToWithdraw);
-        await supabase.from('profiles').update({ wallet_balance: finalBalance }).eq('id', session.user.id)
+      try {
+        await apiRequest('/api/withdrawals/request', { method: 'POST' });
         alert("💸 Pengajuan Berhasil. Mohon tunggu verifikasi admin.")
-      } else {
+      } catch (error) {
         alert("❌ Gagal: " + error.message)
       }
       fetchData(session.user.id)
@@ -239,15 +243,14 @@ function App() {
   }
 
   const handleWithdrawalAction = async (transaction, action) => {
-    if (action === 'approve') {
-       const { error } = await supabase.from('transactions').update({ status: 'success' }).eq('id', transaction.id);
-       if (!error) alert("✅ Withdrawal Approved Successfully");
-    } else {
-       // REJECT: Refund the balance
-       const { data: userProf } = await supabase.from('profiles').select('wallet_balance').eq('id', transaction.user_id).single();
-       await supabase.from('profiles').update({ wallet_balance: (userProf?.wallet_balance || 0) + transaction.amount }).eq('id', transaction.user_id);
-       await supabase.from('transactions').update({ status: 'failed' }).eq('id', transaction.id);
-       alert("❌ Withdrawal Rejected. Balance refunded to artist.");
+    try {
+      await apiRequest(`/api/admin/withdrawals/${transaction.id}`, {
+        method: 'POST',
+        body: JSON.stringify({ action })
+      });
+      alert(action === 'approve' ? "✅ Withdrawal Approved Successfully" : "❌ Withdrawal Rejected. Balance refunded to artist.");
+    } catch (error) {
+      alert(error.message);
     }
     fetchData(session.user.id);
   }
@@ -256,36 +259,14 @@ function App() {
     if (profile.wallet_balance < 50000) return alert("❌ Admin balance too low for withdrawal.");
     const confirm = window.confirm(`Withdraw Admin Platform Fees: Rp ${profile.wallet_balance.toLocaleString('id-ID')}?`);
     if (confirm) {
-       const { error } = await supabase.from('transactions').insert([{
-         user_id: session.user.id, type: 'admin_withdrawal', amount: profile.wallet_balance, status: 'success'
-       }]);
-       if (!error) {
-         await supabase.from('profiles').update({ wallet_balance: 0 }).eq('id', session.user.id);
+       try {
+         await apiRequest('/api/admin/platform-withdrawal', { method: 'POST' });
          alert("💸 Platform fees withdrawn successfully.");
+       } catch (error) {
+         alert("❌ " + error.message);
        }
        fetchData(session.user.id);
     }
-  }
-
-  const purchaseUploadSlot = async () => {
-    setPaymentDetails({ title: '1x Upload Slot', price: 100000, type: 'quota' });
-    setShowPaymentModal(true);
-  }
-
-  const executePaymentSuccess = async () => {
-    if (paymentDetails.type === 'subscription') {
-      await supabase.from('transactions').insert([{ 
-        user_id: session.user.id, type: 'subscription_payment', amount: 150000, status: 'success', payment_method: 'midtrans_qris' 
-      }])
-      await supabase.from('profiles').update({ subscription_tier: 'pro', quota: 999, split_percentage: 100 }).eq('id', session.user.id)
-    } else {
-      await supabase.from('profiles').update({ quota: (profile.quota || 0) + 1 }).eq('id', session.user.id);
-      await supabase.from('transactions').insert([{ 
-         user_id: session.user.id, type: 'quota_purchase', amount: 100000, status: 'success' 
-      }]);
-    }
-    setShowPaymentModal(false);
-    fetchData(session.user.id);
   }
 
   const handleUploadLagu = async (e) => {
@@ -297,109 +278,66 @@ function App() {
     
     setUploading(true)
     try {
-      const autoIsrc = await generateISRC();
-      const autoUpc = generateUPC();
-
       const fileName = `${Date.now()}.${coverFile.name.split('.').pop()}`
       const { error: upError } = await supabase.storage.from('rilisan').upload(`covers/${fileName}`, coverFile)
       if (upError) throw new Error("Gagal mengunggah cover: " + upError.message);
       
       const { data: { publicUrl } } = supabase.storage.from('rilisan').getPublicUrl(`covers/${fileName}`)
-      
-      const { data: releaseData, error: insError } = await supabase.from('releases').insert([{ 
-        user_id: session.user.id, 
-        title, 
-        genre, 
-        audio_url: audioLink, 
-        cover_url: publicUrl, 
-        status: 'pending', 
-        explicit_lyrics: explicit,
-        isrc: autoIsrc, 
-        upc: autoUpc,
-        split_percentage: profile.subscription_tier === 'pro' ? 100 : 80
-      }]).select().single()
-      
-      if (insError) throw insError;
 
-      // Save Splits to Database (Only if email is provided)
-      const validSplits = splits.filter(s => s.email && s.email.trim() !== '');
-      if (validSplits.length > 0) {
-        const splitPayload = validSplits.map(s => ({
-          release_id: releaseData.id,
-          email: s.email,
-          percentage: s.percentage
-        }));
-        await supabase.from('release_splits').insert(splitPayload);
-      }
-      
-      if (profile.role !== 'admin' && profile.subscription_tier !== 'pro') {
-        await supabase.from('profiles').update({ quota: profile.quota - 1 }).eq('id', session.user.id)
-      }
+      const result = await apiRequest('/api/releases', {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          genre,
+          audio_url: audioLink,
+          cover_url: publicUrl,
+          explicit_lyrics: explicit,
+          splits
+        })
+      });
 
-      alert(`🚀 Sukses! Karya masuk antrean dengan ISRC: ${autoIsrc}`);
+      alert(`🚀 Sukses! Karya masuk antrean dengan ISRC: ${result.isrc}`);
       setTitle(''); setAudioLink(''); setCoverFile(null);
       fetchData(session.user.id)
     } catch (err) { alert(err.message) } finally { setUploading(false) }
   }
 
   const handleAdminReject = async (track) => {
-    const reason = window.prompt('Alasan penolakan (opsional):');
-    await supabase.from('releases').update({ status: 'rejected' }).eq('id', track.id)
-    alert('❌ Track Ditolak. Artist akan diberitahu.')
+    try {
+      await apiRequest(`/api/admin/releases/${track.id}/action`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'reject' })
+      });
+      alert('❌ Track Ditolak. Artist akan diberitahu.')
+    } catch (error) {
+      alert(error.message);
+    }
     fetchData(session.user.id)
   }
 
   const handleAdminApprove = async (track) => {
-    await supabase.from('releases').update({ status: 'released' }).eq('id', track.id)
-    alert("✅ Track Approved & Live on Spotify Stores");
+    try {
+      await apiRequest(`/api/admin/releases/${track.id}/action`, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'approve' })
+      });
+      alert("✅ Track Approved & Live on Spotify Stores");
+    } catch (error) {
+      alert(error.message);
+    }
     fetchData(session.user.id);
   }
 
   const handleAdminRoyaltyMock = async (track) => {
-    const totalFromSpotify = 100000;
-    
-    // 1. Hitung porsi 'Artis + Kolaborator' (Platform Fee Check)
-    // Jika track punya split_percentage (default 80), maka Disba ambil 20%
-    const splitPct = track.split_percentage || 80; 
-    const shareableAmount = totalFromSpotify * (splitPct / 100);
-
-    // 2. Ambil data kolaborator
-    const { data: splits } = await supabase.from('release_splits').select('*').eq('release_id', track.id);
-    
-    if (!splits || splits.length === 0) {
-      // Fallback jika tidak ada split (bayar ke uploader 100% dari shareableAmount)
-      const { data: prof } = await supabase.from('profiles').select('wallet_balance').eq('id', track.user_id).single();
-      const newBal = (prof?.wallet_balance || 0) + shareableAmount;
-      await supabase.from('profiles').update({ wallet_balance: newBal }).eq('id', track.user_id);
-      await supabase.from('transactions').insert([{ user_id: track.user_id, type: 'royalty_dist', amount: shareableAmount, status: 'success' }]);
-      await supabase.from('royalties_ledger').insert([{ user_id: track.user_id, release_id: track.id, amount_earned: shareableAmount, report_month: new Date() }]);
-      alert(`💰 Sukses! Rp${shareableAmount.toLocaleString('id-ID')} dibayarkan ke Pemilik Utama.`);
-    } else {
-      // Distribusikan ke setiap kolaborator
-      let paidCount = 0;
-      let missedEmails = [];
-      
-      for (const s of splits) {
-        const collaboratorAmount = shareableAmount * (s.percentage / 100);
-        const { data: targetUser } = await supabase.from('profiles').select('id, wallet_balance').eq('email', s.email).single();
-        
-        if (targetUser) {
-          const newBal = (targetUser.wallet_balance || 0) + collaboratorAmount;
-          await supabase.from('profiles').update({ wallet_balance: newBal }).eq('id', targetUser.id);
-          await supabase.from('transactions').insert([{ user_id: targetUser.id, type: 'royalty_dist', amount: collaboratorAmount, status: 'success' }]);
-          await supabase.from('royalties_ledger').insert([{ user_id: targetUser.id, release_id: track.id, amount_earned: collaboratorAmount, report_month: new Date() }]);
-          paidCount++;
-        } else {
-          missedEmails.push(s.email);
-        }
-      }
-      
-      if (missedEmails.length > 0) {
-        alert(`⚠️ Peringatan: ${missedEmails.length} kolaborator (${missedEmails.join(', ')}) belum terdaftar di platform. Royalti mereka tertunda.`);
-      }
-      alert(`💰 Berhasil membagikan Royalti ke ${paidCount} kolaborator.`);
+    try {
+      const result = await apiRequest(`/api/admin/releases/${track.id}/royalties/mock`, {
+        method: 'POST',
+        body: JSON.stringify({ total_amount: 100000 })
+      });
+      alert(result.message);
+    } catch (error) {
+      alert(error.message);
     }
-
     fetchData(session.user.id);
   }
 
@@ -740,7 +678,6 @@ function App() {
                       <tbody className="text-sm">
                         {allTransactions.map(t => {
                           const isDebit = t.type === 'withdrawal';
-                          const statusColor = t.status === 'success' ? 'text-green-400' : t.status === 'pending' ? 'text-yellow-400' : 'text-red-400';
                           const typeLabel = { subscription_payment: 'Subscription', quota_purchase: 'Beli Slot', royalty_dist: 'Royalti', withdrawal: 'Penarikan', admin_withdrawal: 'Admin Withdraw' }[t.type] || t.type;
                           return (
                             <tr key={t.id} className="border-b border-white/[0.02] hover:bg-white/[0.01] transition-colors">
@@ -1029,32 +966,6 @@ function App() {
           </div>
         )}
 
-      {/* Midtrans Simulation Payment Modal */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 backdrop-blur-3xl bg-black/80">
-          <div className="bg-[#12161D] border border-white/10 w-full max-w-sm rounded-[3rem] p-10 shadow-2xl relative animate-in zoom-in-95 duration-300">
-             <button onClick={() => setShowPaymentModal(false)} className="absolute top-8 right-8 text-gray-500 hover:text-white"><LogOut className="rotate-180" size={24} /></button>
-             <div className="text-center mb-8">
-               <div className="bg-blue-600/10 w-16 h-16 rounded-3xl flex items-center justify-center mx-auto mb-6 text-blue-500"><CreditCard size={32}/></div>
-               <h2 className="text-2xl font-black text-white">{paymentDetails.title}</h2>
-               <p className="text-gray-500 text-xs mt-1">Order #DBM-{Math.floor(Math.random()*10000)}</p>
-             </div>
-             
-             <div className="bg-white p-6 rounded-3xl mb-8 flex flex-col items-center">
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-4">Scan QRIS to Pay</p>
-                <div className="w-48 h-48 bg-gray-100 rounded-2xl flex items-center justify-center border-4 border-gray-100">
-                   <Disc3 size={100} className="text-black opacity-20 animate-[spin_10s_linear_infinite]" />
-                </div>
-                <p className="text-black font-black text-xl mt-6">Rp {paymentDetails.price.toLocaleString('id-ID')}</p>
-             </div>
-
-             <button onClick={executePaymentSuccess} className="w-full bg-blue-600 hover:bg-blue-500 py-5 rounded-2xl font-black text-lg transition-all shadow-xl shadow-blue-900/20 text-white">
-               Verify Payment
-             </button>
-             <p className="text-center text-[10px] text-gray-600 mt-6 font-bold uppercase tracking-widest">Secured by Midtrans Sandbox</p>
-          </div>
-        </div>
-      )}
         {/* MANAGE ACCESS MODAL */}
         {selectedUserForManage && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 backdrop-blur-3xl bg-black/80">
