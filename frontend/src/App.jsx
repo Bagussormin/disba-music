@@ -613,7 +613,7 @@ function App() {
                     </div>
 
                     <a 
-                      href={`https://wa.me/6282184187865?text=${encodeURIComponent('Halo, saya ingin konfirmasi pembayaran Disba Music Pro Plan atas nama ' + (profile.full_name || '...'))}`}
+                      href={`https://wa.me/6282164187865?text=${encodeURIComponent('Halo, saya ingin konfirmasi pembayaran Disba Music Pro Plan atas nama ' + (profile.full_name || '...'))}`}
                       target="_blank" rel="noopener noreferrer"
                       className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
                     >
