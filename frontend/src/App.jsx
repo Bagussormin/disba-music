@@ -7,11 +7,12 @@ import {
   Sparkles, UploadCloud, Pause, Play, Settings, ArrowRightCircle
 } from 'lucide-react';
 import LandingPage from './components/LandingPage';
+import SpotifyDistribution from './components/SpotifyDistribution';
 import logo from './assets/logo-disba.png';
 
 function App() {
   const [session, setSession] = useState(null)
-  const [profile, setProfile] = useState({ role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'free' })
+  const [profile, setProfile] = useState({ role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' })
   const [activeTab, setActiveTab] = useState('dashboard') 
   const [allReleases, setAllReleases] = useState([])
   const [allTransactions, setAllTransactions] = useState([])
@@ -34,6 +35,7 @@ function App() {
   const [adminClickCount, setAdminClickCount] = useState(0)
   const [playingTrackId, setPlayingTrackId] = useState(null)
   const [selectedUserForManage, setSelectedUserForManage] = useState(null)
+  const [signingOut, setSigningOut] = useState(false)
 
   // Auth States
   const [email, setEmail] = useState('')
@@ -45,18 +47,7 @@ function App() {
       await fetchData(nextSession.user.id, nextSession.access_token)
     }
   })
-
   useEffect(() => {
-    // Inject Midtrans Snap script
-    const isProduction = import.meta.env.VITE_MIDTRANS_IS_PRODUCTION === 'true';
-    const midtransScriptUrl = isProduction 
-      ? 'https://app.midtrans.com/snap/snap.js' 
-      : 'https://app.sandbox.midtrans.com/snap/snap.js';
-    let scriptTag = document.createElement('script');
-    scriptTag.src = midtransScriptUrl;
-    scriptTag.setAttribute('data-client-key', import.meta.env.VITE_MIDTRANS_CLIENT_KEY || 'SB-Mid-client-YOUR_CLIENT_KEY');
-    document.body.appendChild(scriptTag);
-
     supabase.auth.getSession().then(({ data: { session } }) => syncSession(session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => syncSession(nextSession))
     
@@ -105,8 +96,7 @@ function App() {
 
   const fetchData = async (userId, accessToken = session?.access_token) => {
     setLoadingData(true)
-    const { data: profData } = await supabase.from('profiles').select('*').eq('id', userId).single()
-    const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'free' }
+    const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' }
 
     setProfile(p)
 
@@ -190,36 +180,36 @@ function App() {
     if (error) alert(error.message);
   }
 
-  const handleMidtransPayment = async (purchaseType = 'subscription') => {
-    try {
-      const data = await apiRequest('/api/checkout', {
-        method: 'POST',
-        body: JSON.stringify({ purchase_type: purchaseType })
-      });
+  const handleSignOut = async () => {
+    if (signingOut) {
+      return;
+    }
 
-      if (data.token && window.snap) {
-        window.snap.pay(data.token, {
-          onSuccess: function(){
-            alert("✅ Pembayaran berhasil diproses. Status akun akan diperbarui setelah webhook dari Midtrans masuk.");
-            fetchData(session.user.id);
-          },
-          onPending: function(){
-            alert("⏳ Menunggu pembayaran Anda...");
-          },
-          onError: function(){
-            alert("❌ Pembayaran gagal dilakukan.");
-          },
-          onClose: function(){
-            console.log('Jendela snap ditutup sebelum menyelesaikan pembayaran.');
-          }
-        });
-      } else {
-        alert("Gagal menghubungi gateway Midtrans: " + (data.error || "Snap token missing."));
+    try {
+      setSigningOut(true)
+      const { error } = await supabase.auth.signOut()
+      if (error) {
+        throw error
       }
-    } catch (e) {
-      alert("Checkout API Error: " + e.message + " (Apakah server backend sudah menyala?)");
+
+      setSession(null)
+      setProfile({ role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' })
+      setAllReleases([])
+      setAllTransactions([])
+      setAllRoyalties([])
+      setAllUsers([])
+      setActiveTab('dashboard')
+      setSelectedTrack(null)
+      setSelectedUserForManage(null)
+      setShowSmartLink(false)
+    } catch (error) {
+      alert(error.message || 'Gagal logout.')
+    } finally {
+      setSigningOut(false)
     }
   }
+
+
 
   const requestWithdrawal = async () => {
     if (profile.wallet_balance < 50000) return alert("❌ Saldo minimal penarikan Rp 50.000")
@@ -387,16 +377,16 @@ function App() {
   return (
     <div className="min-h-screen bg-[#07090E] text-white font-sans selection:bg-blue-500/30">
       <nav className="border-b border-white/[0.05] bg-black/20 backdrop-blur-xl sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <img src={logo} alt="Disba Logo" className="h-10 w-auto" />
             <h2 className="text-2xl font-black tracking-tighter">DISBA</h2>
             <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ml-4 hidden md:block">
-              {profile.role === 'admin' ? 'PLATFORM ADMIN' : (profile.subscription_tier === 'pro' ? 'ARTIST PRO' : 'ARTIST FREE')}
+              {profile.role === 'admin' ? 'PLATFORM ADMIN' : (profile.subscription_tier === 'pro' ? 'ARTIST PRO' : 'ARTIST INACTIVE')}
             </span>
           </div>
           
-          <div className="flex bg-white/5 p-1 rounded-full scale-90 md:scale-100">
+          <div className="flex bg-white/5 p-1 rounded-full scale-90 md:scale-100 min-w-0 relative z-10">
             {profile.role === 'admin' ? (
               <>
                 {[
@@ -425,11 +415,13 @@ function App() {
             )}
           </div>
 
-          <button 
-            onClick={() => supabase.auth.signOut()} 
-            className="flex items-center gap-2 text-gray-400 hover:text-red-500 transition-all px-4 py-2 rounded-xl hover:bg-red-500/10 relative z-20 cursor-pointer border border-transparent hover:border-red-500/50"
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={signingOut}
+            className="flex shrink-0 items-center gap-2 text-gray-400 hover:text-red-500 transition-all px-4 py-2 rounded-xl hover:bg-red-500/10 relative z-30 cursor-pointer border border-transparent hover:border-red-500/50 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">Sign Out</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">{signingOut ? 'Signing Out' : 'Sign Out'}</span>
             <LogOut size={18} />
           </button>
         </div>
@@ -449,13 +441,13 @@ function App() {
                 <div>
                   <h1 className="text-6xl font-black tracking-tighter mb-4 animate-in fade-in slide-in-from-bottom-4 duration-700">Good Evening, {profile.full_name || 'Artist'}</h1>
                   <p className="text-blue-400 font-bold tracking-[0.2em] text-xs uppercase flex items-center gap-2">
-                    <Sparkles size={14} /> {profile.subscription_tier === 'pro' ? 'Premium Aggregator Active' : 'Free Tier Distribution'}
+                    <Sparkles size={14} /> {profile.subscription_tier === 'pro' ? 'Premium Aggregator Active' : 'Account Inactive - Upgrade Required'}
                   </p>
                 </div>
                 <div className="flex gap-4">
                   <button onClick={() => setActiveTab('music')} className="bg-white text-black px-8 py-4 rounded-2xl font-bold text-sm hover:scale-105 transition-all shadow-xl shadow-white/10">Release New Music</button>
                   {profile.subscription_tier !== 'pro' && (
-                    <button onClick={handleMidtransPayment} className="bg-blue-600/20 text-blue-400 border border-blue-500/30 px-8 py-4 rounded-2xl font-bold text-sm backdrop-blur-md hover:bg-blue-600/30 transition-all">Go Pro</button>
+                    <button onClick={() => setActiveTab('music')} className="bg-blue-600/20 text-blue-400 border border-blue-500/30 px-8 py-4 rounded-2xl font-bold text-sm backdrop-blur-md hover:bg-blue-600/30 transition-all">Go Pro</button>
                   )}
                 </div>
               </div>
@@ -590,62 +582,54 @@ function App() {
                 ) : (
                   <div className="bg-gradient-to-br from-indigo-900/30 to-blue-900/10 border border-blue-500/30 p-8 rounded-3xl text-center relative overflow-hidden">
                     <h3 className="text-2xl font-black mb-2">Upgrade to Pro</h3>
-                    <p className="text-gray-400 text-xs mb-8">Distribute UNLIMITED tracks and keep 100% earnings.</p>
-                    <button onClick={handleMidtransPayment} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all">Pay with Midtrans (QRIS)</button>
+                    <p className="text-gray-400 text-xs mb-6">Distribute UNLIMITED tracks and keep 100% earnings.</p>
+                    
+                    <div className="bg-black/40 border border-white/5 rounded-2xl p-6 mb-6 text-left space-y-6">
+                      <div>
+                        <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Wallet size={16} /> Transfer Bank</h4>
+                        <div className="space-y-2 text-sm bg-white/5 p-4 rounded-xl">
+                          <div className="flex justify-between border-b border-white/5 pb-2">
+                            <span className="text-gray-500">Bank</span>
+                            <span className="font-bold text-white">BCA</span>
+                          </div>
+                          <div className="flex justify-between border-b border-white/5 pb-2">
+                            <span className="text-gray-500">No. Rekening</span>
+                            <span className="font-mono font-bold text-white text-lg tracking-wider">3491608259</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Atas Nama</span>
+                            <span className="font-bold text-white">Bagus Arifianto Sormin</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 className="text-sm font-bold text-blue-400 mb-4 uppercase tracking-widest flex items-center gap-2"><Zap size={16} /> E-Wallet / QRIS</h4>
+                        <div className="bg-white/5 p-4 rounded-xl text-center">
+                          <img src="/qris-dana.jpeg" alt="QRIS DANA" className="w-48 h-auto mx-auto rounded-xl mb-3 shadow-lg bg-white p-2" />
+                          <p className="text-xs text-gray-400">Scan QRIS di atas menggunakan aplikasi DANA atau e-wallet lainnya (Atas Nama: Bagus Arifianto Sormin)</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <a 
+                      href={`https://wa.me/6282184187865?text=${encodeURIComponent('Halo, saya ingin konfirmasi pembayaran Disba Music Pro Plan atas nama ' + (profile.full_name || '...'))}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+                    >
+                      Konfirmasi via WhatsApp
+                    </a>
                   </div>
                 )}
               </div>
 
               {/* Discography Column */}
               <div className="lg:col-span-8 space-y-6">
-                <h3 className="text-xl font-bold">Your Discography</h3>
-                {allReleases.length === 0 ? (
-                  <div className="p-16 border border-dashed border-white/10 rounded-[3rem] text-center">
-                    <Disc3 className="mx-auto text-gray-700 mb-6 animate-spin" size={48} />
-                    <p className="text-gray-500 text-sm">Start your journey today by releasing your first masterpiece.</p>
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    {allReleases.map(track => (
-                      <div key={track.id} className="bg-white/[0.02] border border-white/[0.05] p-4 flex items-center gap-6 rounded-2xl hover:bg-white/[0.04] transition-all">
-                        <div className="relative group/cover w-20 h-20 shrink-0">
-                          <img src={track.cover_url} className="w-full h-full rounded-xl object-cover shadow-lg" alt="cover" />
-                          <button 
-                            onClick={() => togglePlayback(track.id)}
-                            className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/cover:opacity-100 transition-all rounded-xl"
-                          >
-                            {playingTrackId === track.id ? <Pause className="text-white fill-current" /> : <Play className="text-white fill-current" />}
-                          </button>
-                          {playingTrackId === track.id && (
-                            <audio 
-                              src={track.audio_url} 
-                              autoPlay 
-                              onEnded={() => setPlayingTrackId(null)} 
-                              className="hidden"
-                            />
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <h4 className="font-bold text-lg">{track.title}</h4>
-                          <p className="text-xs text-gray-500 font-mono mb-2">{track.isrc || 'ISRC Processing...'}</p>
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <span className={`text-[9px] font-bold px-3 py-1 rounded-full uppercase ${track.status === 'released' ? 'bg-green-500/10 text-green-400' : track.status === 'rejected' ? 'bg-red-500/10 text-red-400' : 'bg-yellow-500/10 text-yellow-500'}`}>
-                              {track.status === 'released' ? '✓ Live in Stores' : track.status === 'rejected' ? '✗ Ditolak' : '⏳ In Review'}
-                            </span>
-                            {track.status === 'released' && (
-                              <button
-                                onClick={() => { setSelectedTrack(track); setShowSmartLink(true); }}
-                                className="text-[9px] font-bold px-3 py-1 rounded-full bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all uppercase tracking-wide"
-                              >
-                                Smart Link
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <SpotifyDistribution
+                  releases={allReleases}
+                  apiUrl={apiUrl}
+                  accessToken={session?.access_token}
+                />
               </div>
             </div>
           </div>
@@ -796,7 +780,7 @@ function App() {
                       </td>
                       <td className="p-6">
                          <span className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${user.subscription_tier === 'pro' ? 'bg-blue-500/10 text-blue-400' : 'bg-white/5 text-gray-500'}`}>
-                           {user.subscription_tier === 'pro' ? 'PRO' : 'FREE'}
+                           {user.subscription_tier === 'pro' ? 'PRO' : 'INACTIVE'}
                          </span>
                          {user.role === 'admin' && <span className="ml-2 px-2 py-1 bg-purple-500/10 text-purple-400 rounded-md text-[9px] font-bold uppercase tracking-widest">ADMIN</span>}
                       </td>

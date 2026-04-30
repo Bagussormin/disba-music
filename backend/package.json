@@ -9,9 +9,10 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.48.0",
+    "axios": "^1.7.2",
     "cors": "^2.8.6",
+    "disba-music-root": "file:..",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "midtrans-client": "^1.4.3"
+    "express": "^5.2.1"
   }
 }

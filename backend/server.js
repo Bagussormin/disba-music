@@ -1,23 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import midtransClient from 'midtrans-client';
 import { createClient } from '@supabase/supabase-js';
-import crypto from 'crypto';
+import spotifyService from './services/spotify.js';
 
 dotenv.config();
 
 const {
   FRONTEND_URL,
-  MIDTRANS_SERVER_KEY,
   SUPABASE_SERVICE_ROLE_KEY,
-  VITE_MIDTRANS_CLIENT_KEY,
-  VITE_MIDTRANS_IS_PRODUCTION,
   VITE_SUPABASE_URL,
   PORT
 } = process.env;
 
-if (!MIDTRANS_SERVER_KEY || !SUPABASE_SERVICE_ROLE_KEY || !VITE_SUPABASE_URL) {
+if (!SUPABASE_SERVICE_ROLE_KEY || !VITE_SUPABASE_URL) {
   throw new Error('Missing required environment variables for backend startup.');
 }
 
@@ -32,24 +28,7 @@ const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   }
 });
 
-const snap = new midtransClient.Snap({
-  isProduction: VITE_MIDTRANS_IS_PRODUCTION === 'true',
-  serverKey: MIDTRANS_SERVER_KEY,
-  clientKey: VITE_MIDTRANS_CLIENT_KEY
-});
 
-const purchaseCatalog = {
-  subscription: {
-    amount: 150000,
-    transactionType: 'subscription_payment',
-    title: 'DISBA PRO'
-  },
-  quota: {
-    amount: 100000,
-    transactionType: 'quota_purchase',
-    title: '1x Upload Slot'
-  }
-};
 
 app.use(cors({
   origin: [frontendUrl, 'http://localhost:5173'],
@@ -141,47 +120,16 @@ function generateUpc() {
 }
 
 async function ensureReleaseEntitlement(profile) {
-  if (profile.role === 'admin' || profile.subscription_tier === 'pro') {
+  if (profile.role === 'admin') {
     return;
   }
 
   if ((profile.quota || 0) <= 0) {
-    throw new Error('Kuota upload habis. Silakan beli slot upload terlebih dahulu.');
+    throw new Error('Token upload habis. Silakan beli Token terlebih dahulu.');
   }
 }
 
-async function applySuccessfulPayment(transactionRow) {
-  if (!transactionRow?.user_id) {
-    return;
-  }
 
-  if (transactionRow.type === 'subscription_payment') {
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        subscription_tier: 'pro',
-        quota: 999,
-        split_percentage: 100
-      })
-      .eq('id', transactionRow.user_id);
-
-    if (error) {
-      throw new Error(`Failed to upgrade profile: ${error.message}`);
-    }
-  }
-
-  if (transactionRow.type === 'quota_purchase') {
-    const profile = await getProfile(transactionRow.user_id);
-    const { error } = await supabase
-      .from('profiles')
-      .update({ quota: (profile.quota || 0) + 1 })
-      .eq('id', transactionRow.user_id);
-
-    if (error) {
-      throw new Error(`Failed to increase quota: ${error.message}`);
-    }
-  }
-}
 
 app.get('/api/admin/dashboard', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -209,71 +157,11 @@ app.get('/api/admin/dashboard', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/checkout', requireAuth, async (req, res) => {
-  try {
-    const purchaseType = req.body?.purchase_type;
-    const purchase = purchaseCatalog[purchaseType];
 
-    if (!purchase) {
-      return res.status(400).json({ error: 'Unsupported purchase type.' });
-    }
-
-    const profile = await getProfile(req.user.id);
-    if (purchaseType === 'subscription' && profile.subscription_tier === 'pro') {
-      return res.status(400).json({ error: 'Akun ini sudah PRO.' });
-    }
-
-    const orderId = generateOrderId();
-    const parameter = {
-      transaction_details: {
-        order_id: orderId,
-        gross_amount: purchase.amount
-      },
-      customer_details: {
-        first_name: profile.full_name || 'Artist',
-        email: req.user.email
-      },
-      item_details: [
-        {
-          id: purchase.transactionType,
-          name: purchase.title,
-          price: purchase.amount,
-          quantity: 1
-        }
-      ]
-    };
-
-    const transaction = await snap.createTransaction(parameter);
-
-    const { error: dbError } = await supabase.from('transactions').insert({
-      midtrans_order_id: orderId,
-      user_id: req.user.id,
-      amount: purchase.amount,
-      status: 'pending',
-      type: purchase.transactionType,
-      payment_method: 'midtrans_snap',
-      snap_token: transaction.token
-    });
-
-    if (dbError) {
-      throw new Error(`Failed to persist transaction: ${dbError.message}`);
-    }
-
-    res.json({
-      token: transaction.token,
-      redirect_url: transaction.redirect_url,
-      order_id: orderId,
-      amount: purchase.amount
-    });
-  } catch (error) {
-    console.error('Checkout error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
 
 app.post('/api/releases', requireAuth, async (req, res) => {
   try {
-    const { title, genre, audio_url, cover_url, explicit_lyrics, splits } = req.body || {};
+    const { title, genre, audio_url, cover_url, explicit_lyrics, splits, album_name, selected_stores } = req.body || {};
     if (!title || !genre || !audio_url || !cover_url) {
       return res.status(400).json({ error: 'Metadata release belum lengkap.' });
     }
@@ -301,7 +189,9 @@ app.post('/api/releases', requireAuth, async (req, res) => {
         explicit_lyrics: Boolean(explicit_lyrics),
         isrc: generatedIsrc,
         upc,
-        split_percentage: splitPercentage
+        split_percentage: splitPercentage,
+        album_name: album_name ? String(album_name).trim() : null,
+        selected_stores: Array.isArray(selected_stores) ? selected_stores : []
       }])
       .select()
       .single();
@@ -330,7 +220,7 @@ app.post('/api/releases', requireAuth, async (req, res) => {
       }
     }
 
-    if (profile.role !== 'admin' && profile.subscription_tier !== 'pro') {
+    if (profile.role !== 'admin') {
       const { error: quotaError } = await supabase
         .from('profiles')
         .update({ quota: Math.max(0, (profile.quota || 0) - 1) })
@@ -405,7 +295,7 @@ app.patch('/api/admin/users/:userId', requireAuth, requireAdmin, async (req, res
     const allowedUpdates = {};
 
     if (typeof req.body?.subscription_tier === 'string') {
-      if (!['free', 'pro'].includes(req.body.subscription_tier)) {
+      if (!['free', 'inactive', 'pro'].includes(req.body.subscription_tier)) {
         return res.status(400).json({ error: 'subscription_tier tidak valid.' });
       }
       allowedUpdates.subscription_tier = req.body.subscription_tier;
@@ -643,62 +533,464 @@ app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAd
   }
 });
 
-app.post('/api/midtrans-webhook', async (req, res) => {
+
+
+
+// ========== SPOTIFY INTEGRATION ENDPOINTS ==========
+
+/**
+ * POST /api/spotify/distribute
+ * Distribute a track to Spotify
+ * Body: { releaseId, artistName?, albumName? }
+ */
+app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
   try {
-    const { order_id, status_code, gross_amount, signature_key, transaction_status, payment_type } = req.body || {};
-    if (!order_id || !status_code || !gross_amount || !signature_key || !transaction_status) {
-      return res.status(400).json({ error: 'Invalid webhook payload.' });
+    const { releaseId } = req.body;
+    if (!releaseId) {
+      return res.status(400).json({ error: 'Release ID diperlukan.' });
     }
 
-    const generatedSig = crypto
-      .createHash('sha512')
-      .update(order_id + status_code + gross_amount + MIDTRANS_SERVER_KEY)
-      .digest('hex');
-
-    if (generatedSig !== signature_key) {
-      return res.status(403).json({ error: 'Invalid signature payload.' });
-    }
-
-    const { data: transactionRow, error: transactionError } = await supabase
-      .from('transactions')
+    // Get release data
+    const { data: release, error: releaseError } = await supabase
+      .from('releases')
       .select('*')
-      .eq('midtrans_order_id', order_id)
+      .eq('id', releaseId)
+      .eq('user_id', req.user.id)
       .single();
 
-    if (transactionError || !transactionRow) {
-      return res.status(200).json({ message: 'Transaction not registered locally.' });
+    if (releaseError || !release) {
+      return res.status(404).json({ error: 'Release tidak ditemukan.' });
     }
 
-    let mappedStatus = 'pending';
-    if (transaction_status === 'capture' || transaction_status === 'settlement') {
-      mappedStatus = 'settlement';
-    } else if (['cancel', 'deny', 'expire'].includes(transaction_status)) {
-      mappedStatus = 'expire';
+    if (release.status !== 'released' && release.status !== 'pending') {
+      return res.status(400).json({ error: 'Release harus sudah approved untuk didistribusikan.' });
     }
 
-    const alreadySettled = ['settlement', 'success'].includes(transactionRow.status);
-    const { error: updateError } = await supabase
-      .from('transactions')
+    // Check if already distributed
+    const { data: existing } = await supabase
+      .from('spotify_distributions')
+      .select('id')
+      .eq('release_id', releaseId)
+      .eq('status', 'distributed')
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Track sudah didistribusikan ke Spotify.' });
+    }
+
+    // Get artist profile name
+    const profile = await getProfile(req.user.id);
+
+    // Call Spotify service to distribute
+    const distributionResult = await spotifyService.distributeTrack({
+      title: release.title,
+      artist_name: profile.full_name || 'Unknown Artist',
+      album_name: req.body.albumName || release.title,
+      audio_url: release.audio_url,
+      cover_url: release.cover_url,
+      isrc: release.isrc,
+      upc: release.upc,
+      explicit_lyrics: release.explicit_lyrics
+    });
+
+    // Save distribution record
+    const { data: distribution, error: distError } = await supabase
+      .from('spotify_distributions')
+      .insert([{
+        release_id: releaseId,
+        user_id: req.user.id,
+        spotify_track_id: distributionResult.spotify_track_id,
+        spotify_uri: distributionResult.spotify_uri,
+        status: 'distributed',
+        distribution_date: distributionResult.distribution_date
+      }])
+      .select()
+      .single();
+
+    if (distError) {
+      throw new Error(distError.message);
+    }
+
+    // Update release with Spotify info
+    await supabase
+      .from('releases')
       .update({
-        status: mappedStatus,
-        payment_method: payment_type || transactionRow.payment_method
+        spotify_track_id: distributionResult.spotify_track_id,
+        spotify_status: 'distributed'
       })
-      .eq('id', transactionRow.id);
+      .eq('id', releaseId);
+
+    res.status(201).json({
+      message: 'Track berhasil didistribusikan ke Spotify!',
+      distribution: distribution,
+      spotify_uri: distributionResult.spotify_uri,
+      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 jam
+    });
+  } catch (error) {
+    console.error('Spotify distribution error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/spotify/status/:releaseId
+ * Get distribution status of a track
+ */
+app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
+  try {
+    const { releaseId } = req.params;
+
+    const { data: distribution, error } = await supabase
+      .from('spotify_distributions')
+      .select('*')
+      .eq('release_id', releaseId)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (error || !distribution) {
+      return res.status(404).json({ error: 'Distribusi tidak ditemukan.' });
+    }
+
+    // Get analytics if distributed
+    let analytics = null;
+    if (distribution.status === 'distributed') {
+      const { data: analyticsData } = await supabase
+        .from('spotify_analytics')
+        .select('*')
+        .eq('spotify_distribution_id', distribution.id)
+        .order('report_date', { ascending: false })
+        .limit(1)
+        .single();
+
+      analytics = analyticsData;
+    }
+
+    res.json({
+      distribution,
+      analytics,
+      streams: analytics?.streams || 0,
+      revenue: analytics?.total_revenue || 0
+    });
+  } catch (error) {
+    console.error('Get status error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/spotify/analytics/:releaseId
+ * Get detailed analytics for a track
+ */
+app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
+  try {
+    const { releaseId } = req.params;
+
+    // Get all analytics for this release
+    const { data: analytics, error } = await supabase
+      .from('spotify_analytics')
+      .select('*')
+      .eq('release_id', releaseId)
+      .order('report_date', { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!analytics || analytics.length === 0) {
+      return res.status(404).json({ error: 'Belum ada data analitik.' });
+    }
+
+    // Calculate totals
+    const totalStreams = analytics.reduce((sum, a) => sum + (a.streams || 0), 0);
+    const totalRevenue = analytics.reduce((sum, a) => sum + (a.total_revenue || 0), 0);
+    const totalDisbaCommission = analytics.reduce((sum, a) => sum + (a.disba_commission || 0), 0);
+    const totalArtistPayout = analytics.reduce((sum, a) => sum + (a.artist_payout || 0), 0);
+
+    res.json({
+      analytics,
+      summary: {
+        totalStreams,
+        totalRevenue,
+        totalDisbaCommission,
+        totalArtistPayout,
+        commissionPercentage: 15,
+        last_update: analytics[0]?.report_date
+      }
+    });
+  } catch (error) {
+    console.error('Get analytics error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/spotify/webhook
+ * Receive royalty updates from Spotify (simulated)
+ */
+app.post('/api/spotify/webhook', async (req, res) => {
+  try {
+    const { release_id, artist_id, streams, revenue, report_date } = req.body;
+
+    if (!release_id || !revenue) {
+      return res.status(400).json({ error: 'Missing required webhook data.' });
+    }
+
+    // Get distribution record
+    const { data: distribution, error: distError } = await supabase
+      .from('spotify_distributions')
+      .select('*')
+      .eq('release_id', release_id)
+      .single();
+
+    if (distError || !distribution) {
+      return res.status(404).json({ error: 'Distribution not found.' });
+    }
+
+    // Calculate commission
+    const commissionPct = Number(process.env.SPOTIFY_COMMISSION_PERCENTAGE || 15);
+    const disbaCommission = revenue * (commissionPct / 100);
+    const artistPayout = revenue - disbaCommission;
+
+    // Check if this report already exists
+    const { data: existing } = await supabase
+      .from('spotify_analytics')
+      .select('id')
+      .eq('spotify_distribution_id', distribution.id)
+      .eq('report_date', report_date)
+      .single();
+
+    if (!existing) {
+      // Insert analytics record
+      const { error: analyticsError } = await supabase
+        .from('spotify_analytics')
+        .insert([{
+          spotify_distribution_id: distribution.id,
+          release_id: release_id,
+          user_id: distribution.user_id,
+          report_date: report_date,
+          streams: streams || 0,
+          total_revenue: revenue,
+          disba_commission: disbaCommission,
+          artist_payout: artistPayout
+        }]);
+
+      if (analyticsError) {
+        throw new Error(analyticsError.message);
+      }
+
+      // Update artist wallet ONLY (for commission distribution later)
+      // Don't add to wallet yet - commission is calculated monthly
+    }
+
+    res.json({ message: 'Webhook processed successfully.' });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/spotify/calculate-commissions
+ * Calculate monthly commissions (admin only)
+ * Run this at end of each month
+ */
+app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { month } = req.body; // Format: YYYY-MM
+    if (!month) {
+      return res.status(400).json({ error: 'Month parameter required (YYYY-MM format).' });
+    }
+
+    const monthDate = new Date(`${month}-01`);
+
+    // Check if already calculated for this month
+    const { data: existing } = await supabase
+      .from('admin_commissions')
+      .select('id')
+      .eq('month', month)
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Commissions already calculated for this month.' });
+    }
+
+    // Get all analytics for this month
+    const { data: monthlyAnalytics, error: analyticsError } = await supabase
+      .from('spotify_analytics')
+      .select('*')
+      .gte('report_date', `${month}-01`)
+      .lt('report_date', `${month}-32`);
+
+    if (analyticsError) {
+      throw new Error(analyticsError.message);
+    }
+
+    // Calculate totals
+    const totalArtistEarnings = monthlyAnalytics.reduce((sum, a) => sum + (a.artist_payout || 0), 0);
+    const totalDisbaCommission = monthlyAnalytics.reduce((sum, a) => sum + (a.disba_commission || 0), 0);
+
+    // Create admin commission record
+    const { data: adminCommission, error: commError } = await supabase
+      .from('admin_commissions')
+      .insert([{
+        month: monthDate.toISOString().split('T')[0],
+        total_artist_earnings: totalArtistEarnings,
+        total_commission: totalDisbaCommission,
+        commission_percentage: 15,
+        status: 'calculated'
+      }])
+      .select()
+      .single();
+
+    if (commError) {
+      throw new Error(commError.message);
+    }
+
+    // Create artist commission records for each user
+    const userCommissions = {};
+    monthlyAnalytics.forEach(analytic => {
+      if (!userCommissions[analytic.user_id]) {
+        userCommissions[analytic.user_id] = 0;
+      }
+      userCommissions[analytic.user_id] += analytic.artist_payout;
+    });
+
+    const artistCommissionRecords = Object.entries(userCommissions).map(([userId, earnings]) => ({
+      user_id: userId,
+      admin_commission_id: adminCommission.id,
+      artist_earnings: earnings,
+      commission_owed: earnings * 0.15,
+      status: 'pending'
+    }));
+
+    if (artistCommissionRecords.length > 0) {
+      const { error: insertError } = await supabase
+        .from('artist_commissions')
+        .insert(artistCommissionRecords);
+
+      if (insertError) {
+        throw new Error(insertError.message);
+      }
+    }
+
+    res.json({
+      message: 'Commission calculation complete.',
+      admin_commission: adminCommission,
+      summary: {
+        month,
+        totalArtistEarnings,
+        totalDisbaCommission,
+        artistsAffected: Object.keys(userCommissions).length
+      }
+    });
+  } catch (error) {
+    console.error('Commission calculation error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/spotify/payout-commissions
+ * Transfer commissions to DISBA admin wallet (admin only)
+ */
+app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { month } = req.body; // Format: YYYY-MM
+    if (!month) {
+      return res.status(400).json({ error: 'Month parameter required.' });
+    }
+
+    // Get admin commission record
+    const { data: adminCommission, error: commError } = await supabase
+      .from('admin_commissions')
+      .select('*')
+      .eq('month', month)
+      .eq('status', 'calculated')
+      .single();
+
+    if (commError || !adminCommission) {
+      return res.status(404).json({ error: 'Commission record not found or already paid.' });
+    }
+
+    // Get admin profile
+    const adminProfile = await getProfile(req.user.id);
+
+    // Add commission to admin wallet
+    const newAdminBalance = Number(adminProfile.wallet_balance || 0) + Number(adminCommission.total_commission);
+
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update({ wallet_balance: newAdminBalance })
+      .eq('id', req.user.id);
 
     if (updateError) {
       throw new Error(updateError.message);
     }
 
-    if (mappedStatus === 'settlement' && !alreadySettled) {
-      await applySuccessfulPayment(transactionRow);
+    // Record transaction
+    const { error: transError } = await supabase
+      .from('transactions')
+      .insert([{
+        user_id: req.user.id,
+        type: 'spotify_commission',
+        amount: adminCommission.total_commission,
+        status: 'success',
+        payment_method: 'internal_transfer'
+      }]);
+
+    if (transError) {
+      throw new Error(transError.message);
     }
 
-    res.status(200).json({ message: 'Notification handled.' });
+    // Update commission status
+    await supabase
+      .from('admin_commissions')
+      .update({ status: 'paid' })
+      .eq('id', adminCommission.id);
+
+    res.json({
+      message: 'Commission payout successful!',
+      amount: adminCommission.total_commission,
+      new_balance: newAdminBalance,
+      month
+    });
   } catch (error) {
-    console.error('Webhook error:', error);
-    res.status(500).json({ error: 'Internal server error.' });
+    console.error('Payout error:', error);
+    res.status(400).json({ error: error.message });
   }
 });
+
+/**
+ * GET /api/spotify/commissions
+ * Get commission history (admin only)
+ */
+app.get('/api/spotify/commissions', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data: commissions, error } = await supabase
+      .from('admin_commissions')
+      .select('*')
+      .order('month', { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    res.json({
+      commissions,
+      summary: {
+        total_commissions: commissions.reduce((sum, c) => sum + (c.total_commission || 0), 0),
+        total_paid: commissions.filter(c => c.status === 'paid').reduce((sum, c) => sum + (c.total_commission || 0), 0),
+        pending_amount: commissions.filter(c => c.status === 'pending' || c.status === 'calculated').reduce((sum, c) => sum + (c.total_commission || 0), 0)
+      }
+    });
+  } catch (error) {
+    console.error('Get commissions error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ========== END SPOTIFY ENDPOINTS ==========
+
 
 app.listen(PORT || 3001, () => {
   console.log(`Secure backend server running on port ${PORT || 3001}`);
