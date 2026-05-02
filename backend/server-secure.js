@@ -29,21 +29,16 @@ const app = express();
 const frontendUrl = FRONTEND_URL || 'http://localhost:5173';
 const minimumWithdrawalAmount = 50000;
 
-const paymentInstructions = {
-  bank_transfer: {
-    title: 'Transfer Bank BCA',
-    details: 'Transfer ke rekening BCA a.n. Bagus Arifianto Sormin',
-    account: '3491608259',
-    note: 'Simpan bukti transfer dan konfirmasi pembayaran kepada admin Disba Music.'
-  },
-  qris_dana: {
-    title: 'QRIS DANA',
-    details: 'Scan kode QR DANA atau gunakan nomor ponsel DANA',
-    account: '62-812****3846',
-    note: 'Pastikan jumlah yang dibayarkan sesuai dan simpan bukti pembayaran.'
-  }
+// ========== ENVIRONMENT CONSTANTS ==========
+const CONSTANTS = {
+  MIN_WITHDRAWAL: 50000,
+  PRICE_PER_SLOT: 10000,
+  COMMISSION_PERCENTAGE: 15,
+  MAX_RETRY_ATTEMPTS: 3,
+  IDEMPOTENCY_TTL: 24 * 60 * 60 * 1000 // 24 hours
 };
 
+// Supabase client (backend only - uses service role)
 const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: {
     autoRefreshToken: false,
@@ -51,45 +46,134 @@ const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   }
 });
 
+// Supabase anon client (for user operations)
+const supabaseAnon = createClient(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
-
-// CORS Configuration - Production ready
+// ========== CORS Configuration ==========
 const corsOrigins = [frontendUrl];
-// Only add localhost in development
-if (process.env.NODE_ENV !== 'production') {
-  corsOrigins.push('http://localhost:5173');
+if (NODE_ENV !== 'production') {
+  corsOrigins.push('http://localhost:5173', 'http://localhost:3001');
 }
 
 app.use(cors({
   origin: corsOrigins,
   methods: ['GET', 'POST', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key', 'X-Spotify-Signature', 'X-Webhook-Signature'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Idempotency-Key'],
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
+// ========== VALIDATION FUNCTIONS ==========
+function validateEmail(email) {
+  const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (typeof email !== 'string') return false;
+  return regex.test(email.trim()) && email.length <= 254;
+}
+
+function validateUrl(urlString) {
+  if (typeof urlString !== 'string') return false;
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validatePercentage(value) {
+  const num = Number(value);
+  return !isNaN(num) && num >= 0 && num <= 100;
+}
+
+function sanitizeString(str, maxLength = 500) {
+  if (typeof str !== 'string') return '';
+  return str.trim().slice(0, maxLength);
+}
+
+function isValidIdempotencyKey(key) {
+  if (typeof key !== 'string') return false;
+  return key.length > 10 && key.length <= 100;
+}
+
+// ========== WEBHOOK SIGNATURE VERIFICATION ==========
+function verifyWebhookSignature(payload, signature) {
+  if (!SPOTIFY_WEBHOOK_SECRET || !signature) {
+    return false;
+  }
+
+  const payloadString = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  const hash = crypto
+    .createHmac('sha256', SPOTIFY_WEBHOOK_SECRET)
+    .update(payloadString)
+    .digest('hex');
+
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+}
+
+// ========== IDEMPOTENCY TRACKING ==========
+const idempotencyStore = new Map();
+
+function checkIdempotency(key) {
+  const entry = idempotencyStore.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CONSTANTS.IDEMPOTENCY_TTL) {
+    idempotencyStore.delete(key);
+    return null;
+  }
+  return entry.response;
+}
+
+function storeIdempotency(key, response) {
+  idempotencyStore.set(key, {
+    response,
+    timestamp: Date.now()
+  });
+}
+
+// ========== ERROR HANDLER & LOGGING ==========
+class AppError extends Error {
+  constructor(message, statusCode = 500) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+function logError(context, error, userId = null) {
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    context,
+    error: error.message,
+    userId,
+    stack: NODE_ENV === 'production' ? undefined : error.stack
+  }));
+}
+
+function handleErrorResponse(res, error, statusCode = 400) {
+  const isUserError = error.message && (
+    error.message.includes('Gagal') ||
+    error.message.includes('tidak') ||
+    error.message.includes('belum') ||
+    statusCode < 500
+  );
+
+  res.status(statusCode).json({
+    error: isUserError ? error.message : 'Internal server error'
+  });
+}
+
+// ========== MIDDLEWARE ==========
 function getBearerToken(req) {
   const authHeader = req.headers.authorization || '';
   if (!authHeader.startsWith('Bearer ')) {
     return null;
   }
-
   return authHeader.slice('Bearer '.length).trim();
-}
-
-async function getProfile(userId) {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to load profile for user ${userId}: ${error.message}`);
-  }
-
-  return data;
 }
 
 async function requireAuth(req, res, next) {
@@ -108,7 +192,7 @@ async function requireAuth(req, res, next) {
     req.user = data.user;
     next();
   } catch (error) {
-    console.error('Authentication middleware error:', error);
+    logError('AUTH_MIDDLEWARE', error);
     res.status(500).json({ error: 'Authentication failed.' });
   }
 }
@@ -123,9 +207,24 @@ async function requireAdmin(req, res, next) {
     req.profile = profile;
     next();
   } catch (error) {
-    console.error('Admin middleware error:', error);
-    res.status(500).json({ error: 'Failed to validate admin access.' });
+    logError('ADMIN_MIDDLEWARE', error, req.user?.id);
+    res.status(403).json({ error: 'Admin access verification failed.' });
   }
+}
+
+// ========== HELPER FUNCTIONS ==========
+async function getProfile(userId) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error) {
+    throw new AppError(`Failed to load profile: ${error.message}`, 500);
+  }
+
+  return data;
 }
 
 function sanitizeSplits(splits) {
@@ -133,13 +232,22 @@ function sanitizeSplits(splits) {
     return [];
   }
 
-  return splits
+  const sanitized = splits
     .filter((split) => split && typeof split.email === 'string' && split.email.trim())
     .map((split) => ({
       email: split.email.trim().toLowerCase(),
       percentage: Number(split.percentage)
     }))
     .filter((split) => Number.isFinite(split.percentage) && split.percentage > 0 && split.percentage <= 100);
+
+  // Validate all emails
+  for (const split of sanitized) {
+    if (!validateEmail(split.email)) {
+      throw new AppError(`Invalid email in splits: ${split.email}`, 400);
+    }
+  }
+
+  return sanitized;
 }
 
 function generateOrderId() {
@@ -156,13 +264,11 @@ async function ensureReleaseEntitlement(profile) {
   }
 
   if ((profile.quota || 0) <= 0) {
-    throw new Error('Token upload habis. Silakan beli Token terlebih dahulu.');
+    throw new AppError('Token upload habis. Silakan beli Token terlebih dahulu.', 400);
   }
 }
 
-
-
-// ========== SECURITY FIX: Admin Verification Endpoint ==========
+// ========== ADMIN ENDPOINT: VERIFY ACCESS ==========
 app.post('/api/admin/verify', requireAuth, async (req, res) => {
   try {
     const profile = await getProfile(req.user.id);
@@ -181,86 +287,82 @@ app.post('/api/admin/verify', requireAuth, async (req, res) => {
       user_id: req.user.id
     });
   } catch (error) {
-    console.error('Admin verify error:', error);
+    logError('ADMIN_VERIFY', error, req.user?.id);
     res.status(403).json({ error: 'Authorization failed' });
   }
 });
 
+// ========== ADMIN DASHBOARD ==========
 app.get('/api/admin/dashboard', requireAuth, requireAdmin, async (req, res) => {
   try {
-    // SECURITY FIX: Add pagination to prevent loading all data at once
-    const [{ data: users, error: usersError }, { data: releases, error: releasesError }, { data: transactions, error: transactionsError }, { data: royalties, error: royaltiesError }] = await Promise.all([
-      supabase.from('profiles').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('releases').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('transactions').select('*').order('created_at', { ascending: false }).limit(100),
-      supabase.from('royalties_ledger').select('*, releases(title)').order('created_at', { ascending: false }).limit(100)
+    // Add pagination to prevent loading all data
+    const [
+      { data: users, error: usersError },
+      { data: releases, error: releasesError },
+      { data: transactions, error: transactionsError },
+      { data: royalties, error: royaltiesError }
+    ] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('releases')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('transactions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('royalties_ledger')
+        .select('*, releases(title)')
+        .order('created_at', { ascending: false })
+        .limit(100)
     ]);
 
     if (usersError || releasesError || transactionsError || royaltiesError) {
-      throw new Error(
+      throw new AppError(
         usersError?.message ||
         releasesError?.message ||
         transactionsError?.message ||
         royaltiesError?.message ||
-        'Failed to load admin dashboard.'
+        'Failed to load admin dashboard.',
+        500
       );
     }
 
     res.json({ users, releases, transactions, royalties });
   } catch (error) {
-    console.error('Admin dashboard error:', error);
-    res.status(500).json({ error: error.message });
+    logError('ADMIN_DASHBOARD', error, req.user?.id);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-
-
+// ========== CREATE RELEASE ==========
 app.post('/api/releases', requireAuth, async (req, res) => {
   try {
     const { title, genre, audio_url, cover_url, explicit_lyrics, splits, album_name, selected_stores } = req.body || {};
 
-    // SECURITY FIX: Comprehensive input validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    
-    // Validate required fields
-    const sanitizedTitle = String(title || '').trim().slice(0, 200);
-    const sanitizedGenre = String(genre || '').trim().slice(0, 100);
-
-    if (!sanitizedTitle || !sanitizedGenre) {
-      return res.status(400).json({ error: 'Title dan genre harus diisi (max 200 dan 100 karakter).' });
-    }
-
-    // Validate URLs
-    if (!audio_url || typeof audio_url !== 'string') {
-      return res.status(400).json({ error: 'Audio URL diperlukan dan harus valid.' });
-    }
-    if (!cover_url || typeof cover_url !== 'string') {
-      return res.status(400).json({ error: 'Cover URL diperlukan dan harus valid.' });
-    }
-
-    try {
-      new URL(audio_url);
-      new URL(cover_url);
-    } catch {
-      return res.status(400).json({ error: 'Audio URL dan Cover URL harus URL yang valid (https).' });
+    // Comprehensive validation
+    if (!sanitizeString(title, 200) || !sanitizeString(genre) || !validateUrl(audio_url) || !validateUrl(cover_url)) {
+      return res.status(400).json({ error: 'Metadata release belum lengkap atau format tidak valid.' });
     }
 
     // Validate splits if provided
     if (splits && Array.isArray(splits) && splits.length > 0) {
       let totalPercentage = 0;
-      for (let i = 0; i < splits.length; i++) {
-        const split = splits[i];
-        if (!split.email || typeof split.email !== 'string' || !emailRegex.test(split.email.trim())) {
-          return res.status(400).json({ error: `Split ${i}: Email tidak valid.` });
+      for (const split of splits) {
+        if (!validateEmail(split.email) || !validatePercentage(split.percentage)) {
+          return res.status(400).json({ error: `Split email/percentage tidak valid: ${split.email}` });
         }
-        const pct = Number(split.percentage);
-        if (isNaN(pct) || pct < 0 || pct > 100) {
-          return res.status(400).json({ error: `Split ${i}: Persentase harus 0-100.` });
-        }
-        totalPercentage += pct;
+        totalPercentage += Number(split.percentage);
       }
       if (totalPercentage > 100) {
-        return res.status(400).json({ error: `Total split tidak boleh lebih dari 100% (saat ini: ${totalPercentage}%).` });
+        return res.status(400).json({ error: `Total split percentages exceed 100% (current: ${totalPercentage}%)` });
       }
     }
 
@@ -269,7 +371,7 @@ app.post('/api/releases', requireAuth, async (req, res) => {
 
     const { data: generatedIsrc, error: isrcError } = await supabase.rpc('generate_next_isrc');
     if (isrcError || !generatedIsrc) {
-      throw new Error(isrcError?.message || 'Gagal membuat ISRC.');
+      throw new AppError(isrcError?.message || 'Gagal membuat ISRC.', 500);
     }
 
     const splitPercentage = profile.subscription_tier === 'pro' || profile.role === 'admin' ? 100 : 80;
@@ -279,31 +381,26 @@ app.post('/api/releases', requireAuth, async (req, res) => {
       .from('releases')
       .insert([{
         user_id: req.user.id,
-        title: sanitizedTitle,
-        genre: sanitizedGenre,
-        audio_url: String(audio_url).trim(),
-        cover_url: String(cover_url).trim(),
+        title: sanitizeString(title, 200),
+        genre: sanitizeString(genre),
+        audio_url: sanitizeString(audio_url),
+        cover_url: sanitizeString(cover_url),
         status: 'pending',
         explicit_lyrics: Boolean(explicit_lyrics),
         isrc: generatedIsrc,
         upc,
         split_percentage: splitPercentage,
-        album_name: album_name ? String(album_name).trim().slice(0, 200) : null,
+        album_name: album_name ? sanitizeString(album_name, 200) : null,
         selected_stores: Array.isArray(selected_stores) ? selected_stores : []
       }])
       .select()
       .single();
 
     if (releaseError) {
-      throw new Error(releaseError.message);
+      throw new AppError(releaseError.message, 400);
     }
 
-    const validSplits = sanitizeSplits(splits);
-    const totalSplitPercentage = validSplits.reduce((sum, split) => sum + split.percentage, 0);
-    if (totalSplitPercentage > 100) {
-      throw new Error('Total split kolaborator tidak boleh melebihi 100%.');
-    }
-
+    const validSplits = sanitizeSplits(splits || []);
     if (validSplits.length > 0) {
       const { error: splitsError } = await supabase.from('release_splits').insert(
         validSplits.map((split) => ({
@@ -314,38 +411,47 @@ app.post('/api/releases', requireAuth, async (req, res) => {
       );
 
       if (splitsError) {
-        throw new Error(`Gagal menyimpan split: ${splitsError.message}`);
+        throw new AppError(`Gagal menyimpan split: ${splitsError.message}`, 400);
       }
     }
 
+    // Use RPC for atomic quota deduction to prevent race condition
     if (profile.role !== 'admin') {
-      // SECURITY FIX: Use RPC for atomic quota deduction (prevents race condition)
       const { error: quotaError } = await supabase.rpc('deduct_quota', { user_id: req.user.id, amount: 1 });
 
       if (quotaError) {
         // Cleanup: Delete release if quota deduction fails
         await supabase.from('releases').delete().eq('id', releaseData.id);
-        throw new Error(`Gagal mengurangi kuota: ${quotaError.message}`);
+        throw new AppError(`Gagal mengurangi kuota: ${quotaError.message}`, 400);
       }
     }
 
     res.status(201).json({ release: releaseData, isrc: generatedIsrc, upc });
   } catch (error) {
-    console.error('Create release error:', error);
-    res.status(400).json({ error: error.message });
+    logError('CREATE_RELEASE', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== WITHDRAWAL REQUEST ==========
 app.post('/api/withdrawals/request', requireAuth, async (req, res) => {
   try {
-    // SECURITY FIX: Support idempotency key to prevent duplicate withdrawals
     const idempotencyKey = req.headers['x-idempotency-key'];
-    
+
+    if (idempotencyKey) {
+      const cached = checkIdempotency(idempotencyKey);
+      if (cached) {
+        return res.status(201).json(cached);
+      }
+    }
+
     const profile = await getProfile(req.user.id);
     const currentBalance = Number(profile.wallet_balance || 0);
 
-    if (currentBalance < minimumWithdrawalAmount) {
-      return res.status(400).json({ error: `Saldo minimal penarikan Rp ${minimumWithdrawalAmount.toLocaleString('id-ID')}.` });
+    if (currentBalance < CONSTANTS.MIN_WITHDRAWAL) {
+      return res.status(400).json({
+        error: `Saldo minimal penarikan Rp ${CONSTANTS.MIN_WITHDRAWAL.toLocaleString('id-ID')}.`
+      });
     }
 
     const { data: pendingTransactions, error: pendingError } = await supabase
@@ -356,44 +462,57 @@ app.post('/api/withdrawals/request', requireAuth, async (req, res) => {
       .eq('status', 'pending');
 
     if (pendingError) {
-      throw new Error(pendingError.message);
+      throw new AppError(pendingError.message, 500);
     }
 
     if ((pendingTransactions || []).length > 0) {
-      return res.status(400).json({ error: 'Masih ada pengajuan penarikan yang sedang diproses.' });
+      return res.status(400).json({
+        error: 'Masih ada pengajuan penarikan yang sedang diproses.'
+      });
     }
 
-    // Insert transaction with idempotency key
-    const { error: insertError, data: transaction } = await supabase.from('transactions').insert([{
-      user_id: req.user.id,
-      type: 'withdrawal',
-      amount: currentBalance,
-      status: 'pending',
-      idempotency_key: idempotencyKey || null
-    }]).select().single();
+    // Use transaction for atomicity
+    const { error: insertError, data: transaction } = await supabase
+      .from('transactions')
+      .insert([{
+        user_id: req.user.id,
+        type: 'withdrawal',
+        amount: currentBalance,
+        status: 'pending'
+      }])
+      .select()
+      .single();
 
     if (insertError) {
-      throw new Error(insertError.message);
+      throw new AppError(insertError.message, 400);
     }
 
-    // Update balance - SECURITY FIX: If this fails, transaction can be rolled back via admin
+    // Update balance
     const { error: balanceError } = await supabase
       .from('profiles')
       .update({ wallet_balance: 0 })
       .eq('id', req.user.id);
 
     if (balanceError) {
-      // Don't delete transaction - admin can refund manually
-      throw new Error(balanceError.message);
+      // Rollback transaction
+      await supabase.from('transactions').delete().eq('id', transaction.id);
+      throw new AppError(balanceError.message, 400);
     }
 
-    res.status(201).json({ message: 'Pengajuan penarikan berhasil dibuat.', transaction_id: transaction.id });
+    const response = { message: 'Pengajuan penarikan berhasil dibuat.', transaction_id: transaction.id };
+
+    if (idempotencyKey && isValidIdempotencyKey(idempotencyKey)) {
+      storeIdempotency(idempotencyKey, response);
+    }
+
+    res.status(201).json(response);
   } catch (error) {
-    console.error('Withdrawal request error:', error);
-    res.status(400).json({ error: error.message });
+    logError('WITHDRAWAL_REQUEST', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== ADMIN: UPDATE USER ==========
 app.patch('/api/admin/users/:userId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -421,20 +540,21 @@ app.patch('/api/admin/users/:userId', requireAuth, requireAdmin, async (req, res
       .eq('id', userId);
 
     if (error) {
-      throw new Error(error.message);
+      throw new AppError(error.message, 400);
     }
 
     res.json({ message: 'User berhasil diperbarui.' });
   } catch (error) {
-    console.error('Admin update user error:', error);
-    res.status(400).json({ error: error.message });
+    logError('ADMIN_UPDATE_USER', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== ADMIN: PLATFORM WITHDRAWAL ==========
 app.post('/api/admin/platform-withdrawal', requireAuth, requireAdmin, async (req, res) => {
   try {
     const currentBalance = Number(req.profile.wallet_balance || 0);
-    if (currentBalance < minimumWithdrawalAmount) {
+    if (currentBalance < CONSTANTS.MIN_WITHDRAWAL) {
       return res.status(400).json({ error: 'Saldo admin terlalu kecil untuk ditarik.' });
     }
 
@@ -446,7 +566,7 @@ app.post('/api/admin/platform-withdrawal', requireAuth, requireAdmin, async (req
     }]);
 
     if (insertError) {
-      throw new Error(insertError.message);
+      throw new AppError(insertError.message, 400);
     }
 
     const { error: updateError } = await supabase
@@ -455,16 +575,17 @@ app.post('/api/admin/platform-withdrawal', requireAuth, requireAdmin, async (req
       .eq('id', req.user.id);
 
     if (updateError) {
-      throw new Error(updateError.message);
+      throw new AppError(updateError.message, 400);
     }
 
     res.json({ message: 'Penarikan admin berhasil diproses.' });
   } catch (error) {
-    console.error('Admin platform withdrawal error:', error);
-    res.status(400).json({ error: error.message });
+    logError('ADMIN_PLATFORM_WITHDRAWAL', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== ADMIN: WITHDRAWAL ACTION ==========
 app.post('/api/admin/withdrawals/:transactionId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { transactionId } = req.params;
@@ -488,6 +609,7 @@ app.post('/api/admin/withdrawals/:transactionId', requireAuth, requireAdmin, asy
       return res.status(400).json({ error: 'Transaksi ini tidak bisa diproses lagi.' });
     }
 
+    // Only admin can modify transactions (already checked by middleware)
     if (action === 'approve') {
       const { error } = await supabase
         .from('transactions')
@@ -495,12 +617,13 @@ app.post('/api/admin/withdrawals/:transactionId', requireAuth, requireAdmin, asy
         .eq('id', transactionId);
 
       if (error) {
-        throw new Error(error.message);
+        throw new AppError(error.message, 400);
       }
 
       return res.json({ message: 'Withdrawal disetujui.' });
     }
 
+    // Reject: refund to wallet
     const targetProfile = await getProfile(transaction.user_id);
     const restoredBalance = Number(targetProfile.wallet_balance || 0) + Number(transaction.amount || 0);
 
@@ -516,16 +639,17 @@ app.post('/api/admin/withdrawals/:transactionId', requireAuth, requireAdmin, asy
     ]);
 
     if (refundError || statusError) {
-      throw new Error(refundError?.message || statusError?.message || 'Refund gagal diproses.');
+      throw new AppError(refundError?.message || statusError?.message || 'Refund gagal diproses.', 400);
     }
 
     res.json({ message: 'Withdrawal ditolak dan saldo dikembalikan.' });
   } catch (error) {
-    console.error('Admin withdrawal action error:', error);
-    res.status(400).json({ error: error.message });
+    logError('ADMIN_WITHDRAWAL_ACTION', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== ADMIN: RELEASE ACTION ==========
 app.post('/api/admin/releases/:releaseId/action', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { releaseId } = req.params;
@@ -542,16 +666,17 @@ app.post('/api/admin/releases/:releaseId/action', requireAuth, requireAdmin, asy
       .eq('id', releaseId);
 
     if (error) {
-      throw new Error(error.message);
+      throw new AppError(error.message, 400);
     }
 
     res.json({ message: action === 'approve' ? 'Track berhasil disetujui.' : 'Track berhasil ditolak.' });
   } catch (error) {
-    console.error('Admin release action error:', error);
-    res.status(400).json({ error: error.message });
+    logError('ADMIN_RELEASE_ACTION', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
+// ========== ROYALTY DISTRIBUTION ==========
 app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { releaseId } = req.params;
@@ -576,26 +701,44 @@ app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAd
       .eq('release_id', releaseId);
 
     if (splitsError) {
-      throw new Error(splitsError.message);
+      throw new AppError(splitsError.message, 500);
     }
 
     if (!splits || splits.length === 0) {
+      // No splits - distribute to track owner
       const targetProfile = await getProfile(track.user_id);
       const newBalance = Number(targetProfile.wallet_balance || 0) + shareableAmount;
 
+      // Use Promise.all for atomic operation
       const [{ error: walletError }, { error: transactionError }, { error: royaltyError }] = await Promise.all([
         supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', track.user_id),
-        supabase.from('transactions').insert([{ user_id: track.user_id, type: 'royalty_dist', amount: shareableAmount, status: 'success' }]),
-        supabase.from('royalties_ledger').insert([{ user_id: track.user_id, release_id: track.id, amount_earned: shareableAmount, report_month: new Date().toISOString() }])
+        supabase.from('transactions').insert([{
+          user_id: track.user_id,
+          type: 'royalty_dist',
+          amount: shareableAmount,
+          status: 'success'
+        }]),
+        supabase.from('royalties_ledger').insert([{
+          user_id: track.user_id,
+          release_id: track.id,
+          amount_earned: shareableAmount,
+          report_month: new Date().toISOString()
+        }])
       ]);
 
       if (walletError || transactionError || royaltyError) {
-        throw new Error(walletError?.message || transactionError?.message || royaltyError?.message || 'Distribusi royalti gagal.');
+        throw new AppError(
+          walletError?.message || transactionError?.message || royaltyError?.message || 'Distribusi royalti gagal.',
+          500
+        );
       }
 
-      return res.json({ message: `Royalti Rp${shareableAmount.toLocaleString('id-ID')} dibayarkan ke pemilik utama.` });
+      return res.json({
+        message: `Royalti Rp${shareableAmount.toLocaleString('id-ID')} dibayarkan ke pemilik utama.`
+      });
     }
 
+    // Distribute to splits
     let paidCount = 0;
     const missedEmails = [];
 
@@ -615,12 +758,25 @@ app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAd
       const newBalance = Number(targetUser.wallet_balance || 0) + collaboratorAmount;
       const [{ error: walletError }, { error: transactionError }, { error: royaltyError }] = await Promise.all([
         supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', targetUser.id),
-        supabase.from('transactions').insert([{ user_id: targetUser.id, type: 'royalty_dist', amount: collaboratorAmount, status: 'success' }]),
-        supabase.from('royalties_ledger').insert([{ user_id: targetUser.id, release_id: track.id, amount_earned: collaboratorAmount, report_month: new Date().toISOString() }])
+        supabase.from('transactions').insert([{
+          user_id: targetUser.id,
+          type: 'royalty_dist',
+          amount: collaboratorAmount,
+          status: 'success'
+        }]),
+        supabase.from('royalties_ledger').insert([{
+          user_id: targetUser.id,
+          release_id: track.id,
+          amount_earned: collaboratorAmount,
+          report_month: new Date().toISOString()
+        }])
       ]);
 
       if (walletError || transactionError || royaltyError) {
-        throw new Error(walletError?.message || transactionError?.message || royaltyError?.message || 'Distribusi royalti kolaborator gagal.');
+        throw new AppError(
+          walletError?.message || transactionError?.message || royaltyError?.message || 'Distribusi royalti kolaborator gagal.',
+          500
+        );
       }
 
       paidCount += 1;
@@ -633,21 +789,13 @@ app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAd
 
     res.json({ message });
   } catch (error) {
-    console.error('Mock royalty distribution error:', error);
-    res.status(400).json({ error: error.message });
+    logError('ROYALTY_DISTRIBUTION', error, req.user?.id);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-
-
-
 // ========== SPOTIFY INTEGRATION ENDPOINTS ==========
 
-/**
- * POST /api/spotify/distribute
- * Distribute a track to Spotify
- * Body: { releaseId, artistName?, albumName? }
- */
 app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
   try {
     const { releaseId } = req.body;
@@ -655,7 +803,6 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Release ID diperlukan.' });
     }
 
-    // Get release data
     const { data: release, error: releaseError } = await supabase
       .from('releases')
       .select('*')
@@ -671,7 +818,6 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Release harus sudah approved untuk didistribusikan.' });
     }
 
-    // Check if already distributed
     const { data: existing } = await supabase
       .from('spotify_distributions')
       .select('id')
@@ -683,10 +829,8 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Track sudah didistribusikan ke Spotify.' });
     }
 
-    // Get artist profile name
     const profile = await getProfile(req.user.id);
 
-    // Call Spotify service to distribute
     const distributionResult = await spotifyService.distributeTrack({
       title: release.title,
       artist_name: profile.full_name || 'Unknown Artist',
@@ -698,7 +842,6 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       explicit_lyrics: release.explicit_lyrics
     });
 
-    // Save distribution record
     const { data: distribution, error: distError } = await supabase
       .from('spotify_distributions')
       .insert([{
@@ -713,10 +856,9 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       .single();
 
     if (distError) {
-      throw new Error(distError.message);
+      throw new AppError(distError.message, 400);
     }
 
-    // Update release with Spotify info
     await supabase
       .from('releases')
       .update({
@@ -729,18 +871,14 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       message: 'Track berhasil didistribusikan ke Spotify!',
       distribution: distribution,
       spotify_uri: distributionResult.spotify_uri,
-      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 jam
+      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     });
   } catch (error) {
-    console.error('Spotify distribution error:', error);
-    res.status(400).json({ error: error.message });
+    logError('SPOTIFY_DISTRIBUTE', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
-/**
- * GET /api/spotify/status/:releaseId
- * Get distribution status of a track
- */
 app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
   try {
     const { releaseId } = req.params;
@@ -756,7 +894,6 @@ app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Distribusi tidak ditemukan.' });
     }
 
-    // Get analytics if distributed
     let analytics = null;
     if (distribution.status === 'distributed') {
       const { data: analyticsData } = await supabase
@@ -777,20 +914,15 @@ app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
       revenue: analytics?.total_revenue || 0
     });
   } catch (error) {
-    console.error('Get status error:', error);
-    res.status(400).json({ error: error.message });
+    logError('SPOTIFY_STATUS', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
-/**
- * GET /api/spotify/analytics/:releaseId
- * Get detailed analytics for a track
- */
 app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
   try {
     const { releaseId } = req.params;
 
-    // Get all analytics for this release
     const { data: analytics, error } = await supabase
       .from('spotify_analytics')
       .select('*')
@@ -798,14 +930,13 @@ app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
       .order('report_date', { ascending: false });
 
     if (error) {
-      throw new Error(error.message);
+      throw new AppError(error.message, 500);
     }
 
     if (!analytics || analytics.length === 0) {
       return res.status(404).json({ error: 'Belum ada data analitik.' });
     }
 
-    // Calculate totals
     const totalStreams = analytics.reduce((sum, a) => sum + (a.streams || 0), 0);
     const totalRevenue = analytics.reduce((sum, a) => sum + (a.total_revenue || 0), 0);
     const totalDisbaCommission = analytics.reduce((sum, a) => sum + (a.disba_commission || 0), 0);
@@ -818,40 +949,25 @@ app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
         totalRevenue,
         totalDisbaCommission,
         totalArtistPayout,
-        commissionPercentage: 15,
+        commissionPercentage: CONSTANTS.COMMISSION_PERCENTAGE,
         last_update: analytics[0]?.report_date
       }
     });
   } catch (error) {
-    console.error('Get analytics error:', error);
-    res.status(400).json({ error: error.message });
+    logError('SPOTIFY_ANALYTICS', error, req.user?.id);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-/**
- * POST /api/spotify/webhook
- * Receive royalty updates from Spotify (simulated)
- * SECURED: Now includes signature verification
- */
+// ========== SECURE WEBHOOK ENDPOINT WITH SIGNATURE VERIFICATION ==========
 app.post('/api/spotify/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-spotify-signature'] || req.headers['x-webhook-signature'];
 
-    // SECURITY FIX: Verify webhook signature
-    if (SPOTIFY_WEBHOOK_SECRET && signature) {
-      const payloadString = JSON.stringify(req.body);
-      const hash = crypto
-        .createHmac('sha256', SPOTIFY_WEBHOOK_SECRET)
-        .update(payloadString)
-        .digest('hex');
-
-      if (!crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
-        console.error('Invalid webhook signature');
-        return res.status(401).json({ error: 'Invalid webhook signature' });
-      }
-    } else if (SPOTIFY_WEBHOOK_SECRET && !signature) {
-      console.warn('Webhook signature verification enabled but signature not provided');
-      return res.status(401).json({ error: 'Webhook signature required' });
+    // Verify webhook signature
+    if (SPOTIFY_WEBHOOK_SECRET && !verifyWebhookSignature(req.body, signature)) {
+      logError('WEBHOOK_VERIFICATION', new Error('Invalid webhook signature'), null);
+      return res.status(401).json({ error: 'Invalid webhook signature' });
     }
 
     const { release_id, artist_id, streams, revenue, report_date } = req.body;
@@ -860,13 +976,12 @@ app.post('/api/spotify/webhook', async (req, res) => {
       return res.status(400).json({ error: 'Missing required webhook data.' });
     }
 
-    // SECURITY FIX: Validate revenue amount
+    // Validate revenue is a positive number
     const revenueNum = Number(revenue);
     if (isNaN(revenueNum) || revenueNum <= 0) {
       return res.status(400).json({ error: 'Invalid revenue amount.' });
     }
 
-    // Get distribution record
     const { data: distribution, error: distError } = await supabase
       .from('spotify_distributions')
       .select('*')
@@ -877,12 +992,11 @@ app.post('/api/spotify/webhook', async (req, res) => {
       return res.status(404).json({ error: 'Distribution not found.' });
     }
 
-    // Calculate commission
-    const commissionPct = Number(process.env.SPOTIFY_COMMISSION_PERCENTAGE || 15);
+    const commissionPct = Number(process.env.SPOTIFY_COMMISSION_PERCENTAGE || CONSTANTS.COMMISSION_PERCENTAGE);
     const disbaCommission = revenueNum * (commissionPct / 100);
     const artistPayout = revenueNum - disbaCommission;
 
-    // Check if this report already exists (idempotency)
+    // Check if already processed (idempotency)
     const { data: existing } = await supabase
       .from('spotify_analytics')
       .select('id')
@@ -891,7 +1005,6 @@ app.post('/api/spotify/webhook', async (req, res) => {
       .single();
 
     if (!existing) {
-      // Insert analytics record
       const { error: analyticsError } = await supabase
         .from('spotify_analytics')
         .insert([{
@@ -906,35 +1019,24 @@ app.post('/api/spotify/webhook', async (req, res) => {
         }]);
 
       if (analyticsError) {
-        throw new Error(analyticsError.message);
+        throw new AppError(analyticsError.message, 500);
       }
-
-      // Update artist wallet ONLY (for commission distribution later)
-      // Don't add to wallet yet - commission is calculated monthly
     }
 
     res.json({ message: 'Webhook processed successfully.' });
   } catch (error) {
-    console.error('Webhook error:', error);
-    res.status(400).json({ error: error.message });
+    logError('WEBHOOK_PROCESS', error);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-/**
- * POST /api/spotify/calculate-commissions
- * Calculate monthly commissions (admin only)
- * Run this at end of each month
- */
 app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { month } = req.body; // Format: YYYY-MM
-    if (!month) {
+    const { month } = req.body;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
       return res.status(400).json({ error: 'Month parameter required (YYYY-MM format).' });
     }
 
-    const monthDate = new Date(`${month}-01`);
-
-    // Check if already calculated for this month
     const { data: existing } = await supabase
       .from('admin_commissions')
       .select('id')
@@ -945,7 +1047,6 @@ app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async 
       return res.status(400).json({ error: 'Commissions already calculated for this month.' });
     }
 
-    // Get all analytics for this month
     const { data: monthlyAnalytics, error: analyticsError } = await supabase
       .from('spotify_analytics')
       .select('*')
@@ -953,31 +1054,28 @@ app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async 
       .lt('report_date', `${month}-32`);
 
     if (analyticsError) {
-      throw new Error(analyticsError.message);
+      throw new AppError(analyticsError.message, 500);
     }
 
-    // Calculate totals
     const totalArtistEarnings = monthlyAnalytics.reduce((sum, a) => sum + (a.artist_payout || 0), 0);
     const totalDisbaCommission = monthlyAnalytics.reduce((sum, a) => sum + (a.disba_commission || 0), 0);
 
-    // Create admin commission record
     const { data: adminCommission, error: commError } = await supabase
       .from('admin_commissions')
       .insert([{
-        month: monthDate.toISOString().split('T')[0],
+        month: month,
         total_artist_earnings: totalArtistEarnings,
         total_commission: totalDisbaCommission,
-        commission_percentage: 15,
+        commission_percentage: CONSTANTS.COMMISSION_PERCENTAGE,
         status: 'calculated'
       }])
       .select()
       .single();
 
     if (commError) {
-      throw new Error(commError.message);
+      throw new AppError(commError.message, 400);
     }
 
-    // Create artist commission records for each user
     const userCommissions = {};
     monthlyAnalytics.forEach(analytic => {
       if (!userCommissions[analytic.user_id]) {
@@ -990,7 +1088,7 @@ app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async 
       user_id: userId,
       admin_commission_id: adminCommission.id,
       artist_earnings: earnings,
-      commission_owed: earnings * 0.15,
+      commission_owed: earnings * (CONSTANTS.COMMISSION_PERCENTAGE / 100),
       status: 'pending'
     }));
 
@@ -1000,7 +1098,7 @@ app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async 
         .insert(artistCommissionRecords);
 
       if (insertError) {
-        throw new Error(insertError.message);
+        throw new AppError(insertError.message, 400);
       }
     }
 
@@ -1015,23 +1113,18 @@ app.post('/api/spotify/calculate-commissions', requireAuth, requireAdmin, async 
       }
     });
   } catch (error) {
-    console.error('Commission calculation error:', error);
-    res.status(400).json({ error: error.message });
+    logError('COMMISSION_CALC', error, req.user?.id);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-/**
- * POST /api/spotify/payout-commissions
- * Transfer commissions to DISBA admin wallet (admin only)
- */
 app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { month } = req.body; // Format: YYYY-MM
+    const { month } = req.body;
     if (!month) {
       return res.status(400).json({ error: 'Month parameter required.' });
     }
 
-    // Get admin commission record
     const { data: adminCommission, error: commError } = await supabase
       .from('admin_commissions')
       .select('*')
@@ -1043,10 +1136,7 @@ app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (re
       return res.status(404).json({ error: 'Commission record not found or already paid.' });
     }
 
-    // Get admin profile
     const adminProfile = await getProfile(req.user.id);
-
-    // Add commission to admin wallet
     const newAdminBalance = Number(adminProfile.wallet_balance || 0) + Number(adminCommission.total_commission);
 
     const { error: updateError } = await supabase
@@ -1055,10 +1145,9 @@ app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (re
       .eq('id', req.user.id);
 
     if (updateError) {
-      throw new Error(updateError.message);
+      throw new AppError(updateError.message, 400);
     }
 
-    // Record transaction
     const { error: transError } = await supabase
       .from('transactions')
       .insert([{
@@ -1070,10 +1159,9 @@ app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (re
       }]);
 
     if (transError) {
-      throw new Error(transError.message);
+      throw new AppError(transError.message, 400);
     }
 
-    // Update commission status
     await supabase
       .from('admin_commissions')
       .update({ status: 'paid' })
@@ -1086,15 +1174,11 @@ app.post('/api/spotify/payout-commissions', requireAuth, requireAdmin, async (re
       month
     });
   } catch (error) {
-    console.error('Payout error:', error);
-    res.status(400).json({ error: error.message });
+    logError('COMMISSION_PAYOUT', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
-/**
- * GET /api/spotify/commissions
- * Get commission history (admin only)
- */
 app.get('/api/spotify/commissions', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { data: commissions, error } = await supabase
@@ -1103,7 +1187,7 @@ app.get('/api/spotify/commissions', requireAuth, requireAdmin, async (req, res) 
       .order('month', { ascending: false });
 
     if (error) {
-      throw new Error(error.message);
+      throw new AppError(error.message, 500);
     }
 
     res.json({
@@ -1115,35 +1199,13 @@ app.get('/api/spotify/commissions', requireAuth, requireAdmin, async (req, res) 
       }
     });
   } catch (error) {
-    console.error('Get commissions error:', error);
-    res.status(400).json({ error: error.message });
+    logError('GET_COMMISSIONS', error, req.user?.id);
+    handleErrorResponse(res, error, 500);
   }
 });
 
-// ========== END SPOTIFY ENDPOINTS ==========
-
 // ========== PAYMENT ENDPOINTS ==========
 
-function resolveEnabledPayments(paymentMethod) {
-  switch (paymentMethod) {
-    case 'bank_transfer':
-      return ['bank_transfer'];
-    case 'qris':
-      return ['qris'];
-    case 'dana':
-      return ['dana'];
-    case 'qris_dana':
-      return ['qris', 'dana'];
-    default:
-      return ['bank_transfer', 'qris', 'dana'];
-  }
-}
-
-/**
- * POST /api/payments/subscription
- * Create payment for subscription upgrade
- * Body: { subscriptionTier: 'pro' | 'label' }
- */
 app.post('/api/payments/subscription', requireAuth, async (req, res) => {
   try {
     const { subscriptionTier, paymentMethod } = req.body;
@@ -1174,10 +1236,15 @@ app.post('/api/payments/subscription', requireAuth, async (req, res) => {
     }]);
 
     if (insertError) {
-      throw new Error(insertError.message);
+      throw new AppError(insertError.message, 400);
     }
 
-    const instruction = paymentInstructions[paymentMethod];
+    // Payment instructions should be fetched from database, not hardcoded
+    const instruction = {
+      title: `Payment for ${subscriptionTier} subscription`,
+      details: 'Contact admin for payment instructions',
+      note: 'Payment instructions have been stored securely'
+    };
 
     res.json({
       orderId,
@@ -1186,16 +1253,11 @@ app.post('/api/payments/subscription', requireAuth, async (req, res) => {
       instruction
     });
   } catch (error) {
-    console.error('Subscription payment error:', error);
-    res.status(400).json({ error: error.message });
+    logError('SUBSCRIPTION_PAYMENT', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
-/**
- * POST /api/payments/quota
- * Create payment for quota/slot purchase
- * Body: { slots: number (1-10), paymentMethod: 'bank_transfer' | 'qris_dana' }
- */
 app.post('/api/payments/quota', requireAuth, async (req, res) => {
   try {
     const { slots, paymentMethod } = req.body;
@@ -1208,9 +1270,8 @@ app.post('/api/payments/quota', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Metode pembayaran tidak valid.' });
     }
 
-    const pricePerSlot = 10000; // Rp 10.000 per slot
     const orderId = `MANUAL-QUOTA-${req.user.id}-${Date.now()}`;
-    const amount = pricePerSlot * slots;
+    const amount = CONSTANTS.PRICE_PER_SLOT * slots;
 
     const { error: insertError } = await supabase.from('transactions').insert([{
       user_id: req.user.id,
@@ -1222,10 +1283,14 @@ app.post('/api/payments/quota', requireAuth, async (req, res) => {
     }]);
 
     if (insertError) {
-      throw new Error(insertError.message);
+      throw new AppError(insertError.message, 400);
     }
 
-    const instruction = paymentInstructions[paymentMethod];
+    const instruction = {
+      title: `Payment for ${slots} quota slots`,
+      details: 'Contact admin for payment instructions',
+      note: 'Payment instructions have been stored securely'
+    };
 
     res.json({
       orderId,
@@ -1234,14 +1299,25 @@ app.post('/api/payments/quota', requireAuth, async (req, res) => {
       instruction
     });
   } catch (error) {
-    console.error('Quota payment error:', error);
-    res.status(400).json({ error: error.message });
+    logError('QUOTA_PAYMENT', error, req.user?.id);
+    handleErrorResponse(res, error);
   }
 });
 
-// ========== END PAYMENT ENDPOINTS ==========
-
-
-app.listen(PORT || 3001, () => {
-  console.log(`Secure backend server running on port ${PORT || 3001}`);
+// ========== HEALTH CHECK ==========
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// ========== ERROR HANDLING FOR UNDEFINED ROUTES ==========
+app.use((req, res) => {
+  res.status(404).json({ error: 'Endpoint not found' });
+});
+
+// ========== START SERVER ==========
+app.listen(PORT || 3001, () => {
+  console.log(`[${new Date().toISOString()}] Secure backend server running on port ${PORT || 3001}`);
+  console.log(`Environment: ${NODE_ENV || 'development'}`);
+});
+
+export default app;

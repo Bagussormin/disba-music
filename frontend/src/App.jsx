@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import LandingPage from './components/LandingPage';
 import SpotifyDistribution from './components/SpotifyDistribution';
+import PricingPage from './components/PricingPage';
 import logo from './assets/logo-disba.png';
 
 function App() {
@@ -51,24 +52,29 @@ function App() {
     supabase.auth.getSession().then(({ data: { session } }) => syncSession(session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => syncSession(nextSession))
     
-    // Secret Admin Path Detection (Hash and Query Param)
-    const checkAdminPath = () => {
+    // SECURE: Admin verification is now done server-side
+    // Frontend only shows admin portal if user has admin role in profile
+    // URL hash/query params are for navigation only, not authentication
+    const checkAdminAccess = () => {
       const urlParams = new URLSearchParams(window.location.search);
-      if (window.location.hash === '#admin' || urlParams.get('access') === 'admin') {
+      // URL can contain #admin or ?admin, but authorization is checked from profile.role
+      const attemptAdmin = window.location.hash === '#admin' || urlParams.get('admin') === 'true';
+      // Will be set to true only if profile.role === 'admin' in fetchData()
+      if (attemptAdmin && profile.role === 'admin') {
         setIsAdminPortal(true);
       } else {
         setIsAdminPortal(false);
       }
     };
     
-    checkAdminPath();
-    window.addEventListener('hashchange', checkAdminPath);
+    checkAdminAccess();
+    window.addEventListener('hashchange', checkAdminAccess);
     
     return () => {
       subscription.unsubscribe();
-      window.removeEventListener('hashchange', checkAdminPath);
+      window.removeEventListener('hashchange', checkAdminAccess);
     };
-  }, [syncSession])
+  }, [syncSession, profile.role])
 
   const apiRequest = async (path, options = {}, accessToken = session?.access_token) => {
     if (!accessToken) {
@@ -96,23 +102,57 @@ function App() {
 
   const fetchData = async (userId, accessToken = session?.access_token) => {
     setLoadingData(true)
-    const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' }
+
+    let p = { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' }
+
+    try {
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .single()
+
+      if (profileError) {
+        console.warn('Failed to load profile, using default profile:', profileError.message)
+      } else if (profileData) {
+        p = profileData
+      }
+    } catch (error) {
+      console.warn('Error loading profile:', error)
+    }
 
     setProfile(p)
 
+    // SECURE: Always verify admin access server-side
     if (p.role === 'admin' && accessToken) {
       try {
+        // Verify admin access with server
+        const verification = await apiRequest('/api/admin/verify', {}, accessToken)
+        if (!verification.authorized) {
+          console.warn('Admin verification failed')
+          setAllUsers([])
+          setAllReleases([])
+          setAllTransactions([])
+          setAllRoyalties([])
+          setIsAdminPortal(false)
+          return
+        }
+        
+        // If verified, fetch admin dashboard
         const dashboard = await apiRequest('/api/admin/dashboard', {}, accessToken)
         setAllUsers(dashboard.users || [])
         setAllReleases(dashboard.releases || [])
         setAllTransactions(dashboard.transactions || [])
         setAllRoyalties(dashboard.royalties || [])
+        setIsAdminPortal(true)
       } catch (error) {
+        console.error('Admin access error:', error.message)
         alert(error.message)
         setAllUsers([])
         setAllReleases([])
         setAllTransactions([])
         setAllRoyalties([])
+        setIsAdminPortal(false)
       }
     } else {
       const { data: releases } = await supabase.from('releases').select('*').eq('user_id', userId).order('created_at', { ascending: false })
@@ -405,7 +445,8 @@ function App() {
                 {[
                   { id: 'dashboard', label: 'Dashboard', icon: Activity },
                   { id: 'music', label: 'My Music', icon: Music },
-                  { id: 'wallet', label: 'Wallet', icon: Wallet }
+                  { id: 'wallet', label: 'Wallet', icon: Wallet },
+                  { id: 'pricing', label: 'Pricing', icon: DollarSign }
                 ].map(tab => (
                   <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-5 py-2 rounded-full text-[11px] font-bold transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-white/10 text-white shadow-lg shadow-black/40' : 'text-gray-500 hover:text-white'}`}>
                     <tab.icon size={14} /> {tab.label}
@@ -702,6 +743,19 @@ function App() {
           </div>
         )}
 
+        {/* PRICING TAB */}
+        {activeTab === 'pricing' && (
+          <PricingPage 
+            session={session} 
+            profile={profile}
+            onSubscriptionUpdate={() => {
+              setActiveTab('dashboard');
+              fetchData(session.user.id, session.access_token);
+            }}
+            apiUrl={apiUrl}
+          />
+        )}
+
         {/* ADMIN OVERVIEW TAB */}
         {activeTab === 'admin' && profile.role === 'admin' && (
            <div className="space-y-10">
@@ -905,7 +959,7 @@ function App() {
                        <p className="text-gray-500 text-xs font-bold uppercase tracking-widest mb-2">Available to Withdraw</p>
                        <h2 className="text-5xl font-black text-white tracking-tighter mb-8">Rp {(profile.wallet_balance || 0).toLocaleString('id-ID')}</h2>
                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5 text-[10px] text-gray-400 leading-relaxed uppercase tracking-widest">
-                          Accumulated fees from artist release payouts (20%). Secure your earnings through Midtrans Payouts.
+                          Accumulated fees from artist release payouts (20%). Secure your earnings through manual payment settlement.
                        </div>
                     </div>
                  </div>
