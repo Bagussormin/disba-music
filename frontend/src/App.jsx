@@ -28,6 +28,7 @@ function App() {
   const [explicit, setExplicit] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [splits, setSplits] = useState([{ email: '', percentage: 100 }])
+  const [selectedStores, setSelectedStores] = useState(['spotify'])
   const [selectedTrack, setSelectedTrack] = useState(null)
   const [showSmartLink, setShowSmartLink] = useState(false)
   const [showLogin, setShowLogin] = useState(false) 
@@ -94,39 +95,55 @@ function App() {
     return payload;
   }
 
-  const fetchData = async (userId, accessToken = session?.access_token) => {
-    setLoadingData(true)
-    const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' }
+  const fetchProfile = async (userId) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
 
-    setProfile(p)
+    if (error) {
+      console.warn('Profile load warning:', error.message);
+      return null;
+    }
+
+    return data;
+  }
+
+  const fetchData = async (userId, accessToken = session?.access_token) => {
+    setLoadingData(true);
+    const profileData = await fetchProfile(userId);
+    const p = profileData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' };
+
+    setProfile(p);
 
     if (p.role === 'admin' && accessToken) {
       try {
-        const dashboard = await apiRequest('/api/admin/dashboard', {}, accessToken)
-        setAllUsers(dashboard.users || [])
-        setAllReleases(dashboard.releases || [])
-        setAllTransactions(dashboard.transactions || [])
-        setAllRoyalties(dashboard.royalties || [])
+        const dashboard = await apiRequest('/api/admin/dashboard', {}, accessToken);
+        setAllUsers(dashboard.users || []);
+        setAllReleases(dashboard.releases || []);
+        setAllTransactions(dashboard.transactions || []);
+        setAllRoyalties(dashboard.royalties || []);
       } catch (error) {
-        alert(error.message)
-        setAllUsers([])
-        setAllReleases([])
-        setAllTransactions([])
-        setAllRoyalties([])
+        alert(error.message);
+        setAllUsers([]);
+        setAllReleases([]);
+        setAllTransactions([]);
+        setAllRoyalties([]);
       }
     } else {
-      const { data: releases } = await supabase.from('releases').select('*').eq('user_id', userId).order('created_at', { ascending: false })
-      setAllReleases(releases || [])
+      const { data: releases } = await supabase.from('releases').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      setAllReleases(releases || []);
 
-      const { data: trans } = await supabase.from('transactions').select('*').eq('user_id', userId).order('created_at', { ascending: false })
-      setAllTransactions(trans || [])
+      const { data: trans } = await supabase.from('transactions').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      setAllTransactions(trans || []);
 
-      const { data: roys } = await supabase.from('royalties_ledger').select('*, releases(title)').eq('user_id', userId).order('created_at', { ascending: false })
-      setAllRoyalties(roys || [])
+      const { data: roys } = await supabase.from('royalties_ledger').select('*, releases(title)').eq('user_id', userId).order('created_at', { ascending: false });
+      setAllRoyalties(roys || []);
     }
 
-    if (p.role === 'admin' && activeTab === 'dashboard') setActiveTab('admin')
-    setLoadingData(false)
+    if (p.role === 'admin' && activeTab === 'dashboard') setActiveTab('admin');
+    setLoadingData(false);
   }
 
   const handleAuth = async (emailOrEvent, passwordArg, isSignUp) => {
@@ -265,6 +282,7 @@ function App() {
         return alert("❌ Kuota upload habis. Silakan beli slot upload seharga Rp 100.000 untuk melanjutkan.");
     }
     if (!title || !audioLink || !coverFile) return alert("Harap isi semua metadata (Judul, Audio, Cover)");
+    if (!selectedStores || selectedStores.length === 0) return alert("Pilih setidaknya satu platform distribusi.");
     
     setUploading(true)
     try {
@@ -282,12 +300,13 @@ function App() {
           audio_url: audioLink,
           cover_url: publicUrl,
           explicit_lyrics: explicit,
-          splits
+          splits,
+          selected_stores: selectedStores
         })
       });
 
       alert(`🚀 Sukses! Karya masuk antrean dengan ISRC: ${result.isrc}`);
-      setTitle(''); setAudioLink(''); setCoverFile(null);
+      setTitle(''); setAudioLink(''); setCoverFile(null); setSelectedStores(['spotify']);
       fetchData(session.user.id)
     } catch (err) { alert(err.message) } finally { setUploading(false) }
   }
@@ -574,6 +593,32 @@ function App() {
                           </div>
                         ))}
                       </div>
+                      <div className="bg-black/20 p-4 rounded-2xl border border-white/5 space-y-4">
+                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Pilih Platform Distribusi</p>
+                        <div className="grid grid-cols-3 gap-3">
+                          {[
+                            { id: 'spotify', label: 'Spotify' },
+                            { id: 'tune_core', label: 'TuneCore' },
+                            { id: 'apple_music', label: 'Apple Music' }
+                          ].map((store) => (
+                            <button
+                              key={store.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedStores((prev) =>
+                                  prev.includes(store.id)
+                                    ? prev.filter((id) => id !== store.id)
+                                    : [...prev, store.id]
+                                );
+                              }}
+                              className={`rounded-2xl border px-4 py-3 text-[11px] font-bold transition-all ${selectedStores.includes(store.id) ? 'bg-blue-600 text-white border-blue-500' : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10'}`}
+                            >
+                              {store.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-gray-400">Gunakan store yang ingin Anda distribusikan untuk setiap rilisan, termasuk Spotify, TuneCore, dan Apple Music.</p>
+                      </div>
                       <button type="submit" disabled={uploading} className="w-full bg-white text-black hover:bg-gray-200 py-4 rounded-xl font-bold text-sm transition-all mt-4 flex items-center justify-center gap-2">
                         {uploading ? 'Publishing...' : <><Sparkles size={16}/> Publish to Stores</>}
                       </button>
@@ -629,6 +674,7 @@ function App() {
                   releases={allReleases}
                   apiUrl={apiUrl}
                   accessToken={session?.access_token}
+                  onDistribute={() => fetchData(session.user.id)}
                 />
               </div>
             </div>

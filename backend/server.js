@@ -1,8 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import spotifyService from './services/spotify.js';
+import distributionService from './services/distribution.js';
 
 dotenv.config();
 
@@ -127,6 +128,29 @@ async function ensureReleaseEntitlement(profile) {
   if ((profile.quota || 0) <= 0) {
     throw new Error('Token upload habis. Silakan beli Token terlebih dahulu.');
   }
+}
+
+function resolveDistributionPlatforms(requestedPlatforms, fallbackPlatforms = []) {
+  const basePlatforms = Array.isArray(requestedPlatforms) && requestedPlatforms.length > 0
+    ? requestedPlatforms
+    : fallbackPlatforms;
+
+  return distributionService.normalizePlatforms(basePlatforms);
+}
+
+function buildDistributionMessage(distributionResult) {
+  const deliveredPlatforms = distributionResult.distributed.map((item) => item.platform);
+
+  if (deliveredPlatforms.length === 0 && distributionResult.skipped.length > 0) {
+    return 'Semua platform terpilih sudah terdistribusi atau sedang diproses.';
+  }
+
+  const baseMessage = `Track berhasil didistribusikan ke ${deliveredPlatforms.join(', ')}!`;
+  if (distributionResult.errors.length === 0) {
+    return baseMessage;
+  }
+
+  return `${baseMessage} Beberapa platform lain gagal diproses.`;
 }
 
 
@@ -545,7 +569,7 @@ app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAd
  */
 app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
   try {
-    const { releaseId } = req.body;
+    const { releaseId, platforms, platform } = req.body;
     if (!releaseId) {
       return res.status(400).json({ error: 'Release ID diperlukan.' });
     }
@@ -566,68 +590,104 @@ app.post('/api/spotify/distribute', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Release harus sudah approved untuk didistribusikan.' });
     }
 
-    // Check if already distributed
-    const { data: existing } = await supabase
-      .from('spotify_distributions')
-      .select('id')
-      .eq('release_id', releaseId)
-      .eq('status', 'distributed')
-      .single();
+    const distributionPlatforms = resolveDistributionPlatforms(
+      Array.isArray(platforms) && platforms.length > 0 ? platforms : (platform ? [platform] : []),
+      release.selected_stores
+    );
 
-    if (existing) {
-      return res.status(400).json({ error: 'Track sudah didistribusikan ke Spotify.' });
+    const distributionResult = await distributionService.distributeRelease(supabase, release, distributionPlatforms);
+
+    if (distributionResult.distributed.length === 0 && distributionResult.skipped.length > 0) {
+      return res.status(400).json({ error: 'Semua platform yang dipilih sudah terdistribusi atau sedang diproses.' });
     }
 
-    // Get artist profile name
-    const profile = await getProfile(req.user.id);
-
-    // Call Spotify service to distribute
-    const distributionResult = await spotifyService.distributeTrack({
-      title: release.title,
-      artist_name: profile.full_name || 'Unknown Artist',
-      album_name: req.body.albumName || release.title,
-      audio_url: release.audio_url,
-      cover_url: release.cover_url,
-      isrc: release.isrc,
-      upc: release.upc,
-      explicit_lyrics: release.explicit_lyrics
-    });
-
-    // Save distribution record
-    const { data: distribution, error: distError } = await supabase
-      .from('spotify_distributions')
-      .insert([{
-        release_id: releaseId,
-        user_id: req.user.id,
-        spotify_track_id: distributionResult.spotify_track_id,
-        spotify_uri: distributionResult.spotify_uri,
-        status: 'distributed',
-        distribution_date: distributionResult.distribution_date
-      }])
-      .select()
-      .single();
-
-    if (distError) {
-      throw new Error(distError.message);
+    if (distributionResult.errors.length > 0 && distributionResult.distributed.length === 0) {
+      throw new Error(distributionResult.errors.join(' | '));
     }
-
-    // Update release with Spotify info
-    await supabase
-      .from('releases')
-      .update({
-        spotify_track_id: distributionResult.spotify_track_id,
-        spotify_status: 'distributed'
-      })
-      .eq('id', releaseId);
 
     res.status(201).json({
-      message: 'Track berhasil didistribusikan ke Spotify!',
-      distribution: distribution,
-      spotify_uri: distributionResult.spotify_uri,
-      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 jam
+      message: buildDistributionMessage(distributionResult),
+      distribution: distributionResult.distributed,
+      skipped: distributionResult.skipped,
+      errors: distributionResult.errors,
+      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     });
   } catch (error) {
     console.error('Spotify distribution error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/distribution/distribute', requireAuth, async (req, res) => {
+  try {
+    const { releaseId, platforms } = req.body;
+    if (!releaseId) {
+      return res.status(400).json({ error: 'Release ID diperlukan.' });
+    }
+
+    const { data: release, error: releaseError } = await supabase
+      .from('releases')
+      .select('*')
+      .eq('id', releaseId)
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (releaseError || !release) {
+      return res.status(404).json({ error: 'Release tidak ditemukan.' });
+    }
+
+    if (release.status !== 'released' && release.status !== 'pending') {
+      return res.status(400).json({ error: 'Release harus sudah approved untuk didistribusikan.' });
+    }
+
+    const distributionPlatforms = resolveDistributionPlatforms(platforms, release.selected_stores);
+    const distributionResult = await distributionService.distributeRelease(supabase, release, distributionPlatforms);
+
+    if (distributionResult.distributed.length === 0 && distributionResult.skipped.length > 0) {
+      return res.status(400).json({ error: 'Semua platform yang dipilih sudah terdistribusi atau sedang diproses.' });
+    }
+
+    if (distributionResult.errors.length > 0 && distributionResult.distributed.length === 0) {
+      throw new Error(distributionResult.errors.join(' | '));
+    }
+
+    res.status(201).json({
+      message: buildDistributionMessage(distributionResult),
+      distribution: distributionResult.distributed,
+      skipped: distributionResult.skipped,
+      errors: distributionResult.errors,
+      estimated_live_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    });
+  } catch (error) {
+    console.error('Distribution error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/distribution/providers', requireAuth, async (req, res) => {
+  try {
+    res.json({ providers: distributionService.getProviders() });
+  } catch (error) {
+    console.error('Get providers error:', error);
+    res.status(500).json({ error: 'Failed to load distribution providers.' });
+  }
+});
+
+app.get('/api/distribution/status', requireAuth, async (req, res) => {
+  try {
+    const { data: distributions, error } = await supabase
+      .from('spotify_distributions')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('distribution_date', { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    res.json({ distributions: distributions || [] });
+  } catch (error) {
+    console.error('Get distribution status error:', error);
     res.status(400).json({ error: error.message });
   }
 });
@@ -640,12 +700,16 @@ app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
   try {
     const { releaseId } = req.params;
 
-    const { data: distribution, error } = await supabase
+    const { data: distributions, error } = await supabase
       .from('spotify_distributions')
       .select('*')
       .eq('release_id', releaseId)
       .eq('user_id', req.user.id)
-      .single();
+      .eq('platform', 'spotify')
+      .order('distribution_date', { ascending: false })
+      .limit(1);
+
+    const distribution = distributions?.[0];
 
     if (error || !distribution) {
       return res.status(404).json({ error: 'Distribusi tidak ditemukan.' });
@@ -684,6 +748,23 @@ app.get('/api/spotify/status/:releaseId', requireAuth, async (req, res) => {
 app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
   try {
     const { releaseId } = req.params;
+
+    const { data: distributions, error: distError } = await supabase
+      .from('spotify_distributions')
+      .select('user_id')
+      .eq('release_id', releaseId)
+      .eq('platform', 'spotify')
+      .limit(1);
+
+    const distribution = distributions?.[0];
+
+    if (distError || !distribution) {
+      return res.status(404).json({ error: 'Distribusi tidak ditemukan.' });
+    }
+
+    if (distribution.user_id !== req.user.id) {
+      return res.status(403).json({ error: 'Akses ditolak.' });
+    }
 
     // Get all analytics for this release
     const { data: analytics, error } = await supabase
@@ -736,11 +817,15 @@ app.post('/api/spotify/webhook', async (req, res) => {
     }
 
     // Get distribution record
-    const { data: distribution, error: distError } = await supabase
+    const { data: distributions, error: distError } = await supabase
       .from('spotify_distributions')
       .select('*')
       .eq('release_id', release_id)
-      .single();
+      .eq('platform', 'spotify')
+      .order('distribution_date', { ascending: false })
+      .limit(1);
+
+    const distribution = distributions?.[0];
 
     if (distError || !distribution) {
       return res.status(404).json({ error: 'Distribution not found.' });

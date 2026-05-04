@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS public.spotify_distributions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     release_id UUID REFERENCES public.releases(id) ON DELETE CASCADE,
     user_id UUID REFERENCES auth.users(id),
+    platform TEXT DEFAULT 'spotify',
+    platform_track_id TEXT,
     spotify_track_id TEXT UNIQUE,
+    platform_uri TEXT,
     spotify_uri TEXT,
     status TEXT DEFAULT 'pending', -- pending, distributed, rejected, error
     distribution_date TIMESTAMP WITH TIME ZONE,
@@ -54,6 +57,9 @@ CREATE TABLE IF NOT EXISTS public.artist_commissions (
 );
 
 -- Add column untuk Spotify di releases table
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'spotify';
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform_track_id TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform_uri TEXT;
 ALTER TABLE public.releases ADD COLUMN IF NOT EXISTS spotify_track_id TEXT;
 ALTER TABLE public.releases ADD COLUMN IF NOT EXISTS spotify_status TEXT DEFAULT 'not_distributed';
 

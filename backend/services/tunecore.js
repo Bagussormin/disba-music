@@ -1,16 +1,14 @@
 import axios from 'axios';
-import crypto from 'crypto';
 
-class SpotifyService {
+class TuneCoreService {
   constructor() {
-    this.distributionApiUrl = process.env.SPOTIFY_DISTRIBUTION_API_URL;
-    this.distributionApiKey = process.env.SPOTIFY_DISTRIBUTION_API_KEY;
-    this.webhookSecret = process.env.SPOTIFY_WEBHOOK_SECRET;
+    this.apiUrl = process.env.TUNECORE_DISTRIBUTION_API_URL;
+    this.apiKey = process.env.TUNECORE_DISTRIBUTION_API_KEY;
   }
 
   async distributeTrack(releaseData) {
-    if (!this.distributionApiUrl || !this.distributionApiKey) {
-      throw new Error('Spotify distribution service is not configured. Set SPOTIFY_DISTRIBUTION_API_URL and SPOTIFY_DISTRIBUTION_API_KEY.');
+    if (!this.apiUrl || !this.apiKey) {
+      throw new Error('TuneCore distribution service is not configured. Set TUNECORE_DISTRIBUTION_API_URL and TUNECORE_DISTRIBUTION_API_KEY.');
     }
 
     if (!releaseData.title || !releaseData.isrc || !releaseData.audio_url) {
@@ -29,15 +27,15 @@ class SpotifyService {
     };
 
     try {
-      const response = await axios.post(this.distributionApiUrl, payload, {
+      const response = await axios.post(this.apiUrl, payload, {
         headers: {
-          'Authorization': `Bearer ${this.distributionApiKey}`,
+          'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
         }
       });
 
       if (!response.data || !response.data.platform_track_id) {
-        throw new Error('Spotify distribution partner did not return a valid tracking response.');
+        throw new Error('TuneCore partner did not return a valid tracking response.');
       }
 
       return {
@@ -48,23 +46,10 @@ class SpotifyService {
         distribution_date: response.data.distribution_date || new Date().toISOString()
       };
     } catch (error) {
-      console.error('Spotify distribution error:', error.response?.data || error.message);
+      console.error('TuneCore distribution error:', error.response?.data || error.message);
       throw new Error(error.response?.data?.error || error.message);
     }
   }
-
-  verifyWebhookSignature(payload, signature) {
-    if (!this.webhookSecret) {
-      return false;
-    }
-
-    const hash = crypto
-      .createHmac('sha256', this.webhookSecret)
-      .update(JSON.stringify(payload))
-      .digest('hex');
-
-    return hash === signature;
-  }
 }
 
-export default new SpotifyService();
+export default new TuneCoreService();

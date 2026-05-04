@@ -1,9 +1,9 @@
-# 🎵 DISBA Music - Spotify Integration Setup Guide
+# 🎵 DISBA Music - Multi-Platform Distribution Setup Guide
 
 ## Overview
-DISBA Music Spotify Integration memungkinkan Anda untuk:
-- 📤 Distribute track ke Spotify
-- 📊 Track analytics & streams  
+DISBA Music Aggregator memungkinkan Anda untuk:
+- 📤 Distribute track ke Spotify, TuneCore, Apple Music, dan store lainnya
+- 📊 Track analytics & streams
 - 💰 Menghasilkan revenue melalui commission split (15% DISBA, 85% Artist)
 - 💸 Auto-calculate & payout commissions setiap bulan
 
@@ -56,20 +56,20 @@ npm start
 
 ### 1. **Distribute Track to Spotify**
 ```
-POST /api/spotify/distribute
+POST /api/distribution/distribute
 Authorization: Bearer {accessToken}
 
 Body:
 {
   "releaseId": "uuid-of-release",
-  "albumName": "Album Name (optional)"
+  "platforms": ["spotify", "tune_core", "apple_music"]
 }
 
 Response:
 {
-  "message": "Track berhasil didistribusikan ke Spotify!",
-  "distribution": {...},
-  "spotify_uri": "spotify:track:xxxxx",
+  "message": "Track berhasil didistribusikan ke spotify, tune_core!",
+  "distribution": [...],
+  "errors": [],
   "estimated_live_date": "2026-05-02T10:30:00Z"
 }
 ```
