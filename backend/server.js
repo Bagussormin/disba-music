@@ -1,8 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
-import spotifyService from './services/spotify.js';
+import distributionService from './services/distribution.js';
 
 dotenv.config();
 
@@ -447,7 +448,65 @@ app.post('/api/admin/releases/:releaseId/action', requireAuth, requireAdmin, asy
   }
 });
 
-app.post('/api/admin/releases/:releaseId/royalties/mock', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/wallet/withdraw', requireAuth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (!amount || amount < minimumWithdrawalAmount) {
+      return res.status(400).json({ error: `Minimum withdrawal amount is ${minimumWithdrawalAmount} IDR.` });
+    }
+
+    const profile = await getProfile(req.user.id);
+
+    if (profile.wallet_balance < amount) {
+      return res.status(400).json({ error: 'Insufficient balance.' });
+    }
+
+    // Create withdrawal transaction
+    const { data: transaction, error } = await supabase
+      .from('transactions')
+      .insert([{
+        user_id: req.user.id,
+        type: 'withdrawal',
+        amount: -amount,
+        description: `Withdrawal request - ${amount} IDR`,
+        status: 'pending'
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    // Update wallet balance
+    await supabase
+      .from('profiles')
+      .update({ wallet_balance: profile.wallet_balance - amount })
+      .eq('id', req.user.id);
+
+    res.json({
+      message: 'Withdrawal request submitted successfully.',
+      transaction: transaction
+    });
+  } catch (error) {
+    console.error('Withdrawal error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/wallet/balance', requireAuth, async (req, res) => {
+  try {
+    const profile = await getProfile(req.user.id);
+    res.json({
+      balance: profile.wallet_balance || 0,
+      minimum_withdrawal: minimumWithdrawalAmount
+    });
+  } catch (error) {
+    console.error('Balance check error:', error);
+    res.status(500).json({ error: 'Failed to load balance.' });
+  }
+});
   try {
     const { releaseId } = req.params;
     const totalFromSpotify = Number(req.body?.total_amount || 100000);
