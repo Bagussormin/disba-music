@@ -50,6 +50,30 @@ class AppleMusicService {
       throw new Error(error.response?.data?.error || error.message);
     }
   }
-}
+
+  verifyWebhookSignature(payload, signature) {
+    const crypto = require('crypto');
+    const secret = process.env.APPLE_MUSIC_WEBHOOK_SECRET;
+    
+    if (!secret) {
+      console.error('APPLE_MUSIC_WEBHOOK_SECRET not configured');
+      return false;
+    }
+    
+    const hash = crypto
+      .createHmac('sha256', secret)
+      .update(JSON.stringify(payload))
+      .digest('hex');
+
+    return hash === signature;
+  }
+
+  async getWebhookStatus() {
+    return {
+      configured: !!(this.apiUrl && this.apiKey),
+      webhookSecretConfigured: !!process.env.APPLE_MUSIC_WEBHOOK_SECRET,
+      status: (this.apiUrl && this.apiKey) ? 'ready' : 'not-configured'
+    };
+  }
 
 export default new AppleMusicService();

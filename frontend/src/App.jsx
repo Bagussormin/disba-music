@@ -40,7 +40,7 @@ function App() {
   // Auth States
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  const apiUrl = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '')
   const syncSession = useEffectEvent(async (nextSession) => {
     setSession(nextSession)
     if (nextSession) {
@@ -318,18 +318,7 @@ function App() {
     fetchData(session.user.id);
   }
 
-  const handleAdminRoyaltyMock = async (track) => {
-    try {
-      const result = await apiRequest(`/api/admin/releases/${track.id}/royalties/mock`, {
-        method: 'POST',
-        body: JSON.stringify({ total_amount: 100000 })
-      });
-      alert(result.message);
-    } catch (error) {
-      alert(error.message);
-    }
-    fetchData(session.user.id);
-  }
+
 
   if (!session) {
     // ADMIN SECRET LOGIN VIEW
@@ -859,7 +848,6 @@ function App() {
                              <button onClick={() => handleAdminReject(track)} className="bg-red-500/10 hover:bg-red-500/20 px-6 py-3 rounded-xl text-[10px] font-bold text-red-400 transition-all uppercase">Reject</button>
                           </>
                         )}
-                        <button onClick={() => handleAdminRoyaltyMock(track)} title="Simulate Royalty Distribution" className="bg-white/5 hover:bg-white/10 px-4 py-3 rounded-xl text-[10px] font-bold text-gray-500 transition-all uppercase flex items-center gap-1"><DollarSign size={14}/> Royalti</button>
                       </div>
                     </div>
                   ))}
