@@ -9,12 +9,12 @@ ALTER TABLE public.spotify_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.artist_commissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_commissions ENABLE ROW LEVEL SECURITY;
 
--- Profiles policies
+-- Profiles policies (fixed for UUID/text compatibility)
 CREATE POLICY "Users can view own profile" ON public.profiles
-    FOR SELECT USING (auth.uid() = id);
+    FOR SELECT USING (auth.uid()::text = id);
 
 CREATE POLICY "Users can update own profile" ON public.profiles
-    FOR UPDATE USING (auth.uid() = id);
+    FOR UPDATE USING (auth.uid()::text = id);
 
 -- Releases policies
 CREATE POLICY "Users can view own releases" ON public.releases
@@ -26,12 +26,12 @@ CREATE POLICY "Users can create releases" ON public.releases
 CREATE POLICY "Users can update own releases" ON public.releases
     FOR UPDATE USING (auth.uid() = user_id);
 
--- Admin can view all releases
+-- Admin can view all releases (fixed for UUID/text compatibility)
 CREATE POLICY "Admins can view all releases" ON public.releases
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid()::text AND role = 'admin'
         )
     );
 
@@ -52,48 +52,48 @@ CREATE POLICY "Users can create splits for own releases" ON public.release_split
         )
     );
 
--- Transactions policies
+-- Transactions policies (fixed for UUID/text compatibility)
 CREATE POLICY "Users can view own transactions" ON public.transactions
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT USING (auth.uid()::text = user_id);
 
 CREATE POLICY "Users can create transactions" ON public.transactions
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
+    FOR INSERT WITH CHECK (auth.uid()::text = user_id);
 
--- Admin can view all transactions
+-- Admin can view all transactions (fixed for UUID/text compatibility)
 CREATE POLICY "Admins can view all transactions" ON public.transactions
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid()::text AND role = 'admin'
         )
     );
 
--- Royalties ledger policies
+-- Royalties ledger policies (fixed for UUID/text compatibility)
 CREATE POLICY "Users can view own royalties" ON public.royalties_ledger
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT USING (auth.uid()::text = user_id);
 
--- Admin can view all royalties
+-- Admin can view all royalties (fixed for UUID/text compatibility)
 CREATE POLICY "Admins can view all royalties" ON public.royalties_ledger
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid()::text AND role = 'admin'
         )
     );
 
--- Spotify distributions policies
+-- Spotify distributions policies (fixed for UUID/text compatibility)
 CREATE POLICY "Users can view own distributions" ON public.spotify_distributions
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT USING (auth.uid()::text = user_id);
 
 CREATE POLICY "Users can create distributions" ON public.spotify_distributions
-    FOR INSERT WITH CHECK (auth.uid() = user_id);
+    FOR INSERT WITH CHECK (auth.uid()::text = user_id);
 
--- Admin can view all distributions
+-- Admin can view all distributions (fixed for UUID/text compatibility)
 CREATE POLICY "Admins can view all distributions" ON public.spotify_distributions
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid()::text AND role = 'admin'
         )
     );
 
@@ -106,16 +106,16 @@ CREATE POLICY "Users can view analytics for own tracks" ON public.spotify_analyt
         )
     );
 
--- Artist commissions policies
+-- Artist commissions policies (fixed for UUID/text compatibility)
 CREATE POLICY "Users can view own commissions" ON public.artist_commissions
-    FOR SELECT USING (auth.uid() = user_id);
+    FOR SELECT USING (auth.uid()::text = user_id);
 
--- Admin commissions policies (admin only)
+-- Admin commissions policies (admin only, fixed for UUID/text compatibility)
 CREATE POLICY "Admins can view admin commissions" ON public.admin_commissions
     FOR SELECT USING (
         EXISTS (
             SELECT 1 FROM public.profiles
-            WHERE id = auth.uid() AND role = 'admin'
+            WHERE id = auth.uid()::text AND role = 'admin'
         )
     );
 
