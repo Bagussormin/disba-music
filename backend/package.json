@@ -1,17 +1,19 @@
 {
   "name": "disba-music-backend",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
+  "version": "2.0.0",
+  "description": "Disba Music Aggregator Backend — DDEX ERN 4.1",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node --watch server.js"
   },
+  "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.48.0",
     "axios": "^1.7.2",
     "cors": "^2.8.6",
-    "disba-music-root": "file:..",
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
   }

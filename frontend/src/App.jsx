@@ -1,4 +1,4 @@
-import { useState, useEffect, useEffectEvent } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabase'
 import { 
   Disc3, LogOut, ChevronRight, Check, DollarSign, Globe, Activity, Globe2, ShieldCheck, 
@@ -18,6 +18,7 @@ function App() {
   const [allTransactions, setAllTransactions] = useState([])
   const [allRoyalties, setAllRoyalties] = useState([])
   const [allUsers, setAllUsers] = useState([])
+  const [allDeliveryQueue, setAllDeliveryQueue] = useState([])
   const [loadingData, setLoadingData] = useState(true)
 
   // Form States
@@ -41,12 +42,14 @@ function App() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const apiUrl = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '')
-  const syncSession = useEffectEvent(async (nextSession) => {
+  const syncSession = useCallback(async (nextSession) => {
     setSession(nextSession)
     if (nextSession) {
       await fetchData(nextSession.user.id, nextSession.access_token)
     }
-  })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => syncSession(session))
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => syncSession(nextSession))
@@ -96,6 +99,18 @@ function App() {
 
   const fetchData = async (userId, accessToken = session?.access_token) => {
     setLoadingData(true)
+
+    // Fetch profile dari Supabase
+    const { data: profData, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single()
+
+    if (profileError) {
+      console.error('Failed to load profile:', profileError.message)
+    }
+
     const p = profData || { role: 'artist', quota: 0, wallet_balance: 0, subscription_tier: 'inactive' }
 
     setProfile(p)
@@ -107,12 +122,14 @@ function App() {
         setAllReleases(dashboard.releases || [])
         setAllTransactions(dashboard.transactions || [])
         setAllRoyalties(dashboard.royalties || [])
+        setAllDeliveryQueue(dashboard.deliveryQueue || [])
       } catch (error) {
         alert(error.message)
         setAllUsers([])
         setAllReleases([])
         setAllTransactions([])
         setAllRoyalties([])
+        setAllDeliveryQueue([])
       }
     } else {
       const { data: releases } = await supabase.from('releases').select('*').eq('user_id', userId).order('created_at', { ascending: false })
@@ -382,6 +399,7 @@ function App() {
                   { id: 'admin', label: 'Overview', icon: ShieldCheck },
                   { id: 'users', label: 'Artists', icon: Globe },
                   { id: 'releases', label: 'Releases', icon: Music },
+                  { id: 'queue', label: 'Delivery Queue', icon: Package },
                   { id: 'ledger', label: 'Ledger', icon: DollarSign }
                 ].map(tab => (
                   <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`px-5 py-2 rounded-full text-[11px] font-bold transition-all flex items-center gap-2 ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'text-gray-500 hover:text-white'}`}>
@@ -618,6 +636,7 @@ function App() {
                   releases={allReleases}
                   apiUrl={apiUrl}
                   accessToken={session?.access_token}
+                  onDataRefresh={() => fetchData(session.user.id)}
                 />
               </div>
             </div>
@@ -852,6 +871,195 @@ function App() {
                     </div>
                   ))}
                 </div>
+          </div>
+        )}
+
+        {/* ADMIN DELIVERY QUEUE TAB */}
+        {activeTab === 'queue' && profile.role === 'admin' && (
+          <div className="space-y-8">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-3xl font-black tracking-tighter">DDEX Delivery Queue</h2>
+                <p className="text-gray-500 text-xs mt-1 uppercase tracking-widest font-bold">
+                  DDEX ERN 4.1 · Review & Approve Distribusi ke DSP
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <div className="bg-yellow-500/10 border border-yellow-500/20 px-4 py-2 rounded-xl text-center">
+                  <p className="text-[9px] text-yellow-400 font-bold uppercase">Pending</p>
+                  <p className="text-2xl font-black text-yellow-400">{allDeliveryQueue.filter(q => q.status === 'pending').length}</p>
+                </div>
+                <div className="bg-green-500/10 border border-green-500/20 px-4 py-2 rounded-xl text-center">
+                  <p className="text-[9px] text-green-400 font-bold uppercase">Live</p>
+                  <p className="text-2xl font-black text-green-400">{allDeliveryQueue.filter(q => q.status === 'live').length}</p>
+                </div>
+              </div>
+            </div>
+
+            {allDeliveryQueue.length === 0 ? (
+              <div className="p-16 border border-dashed border-white/10 rounded-[3rem] text-center">
+                <Package className="mx-auto text-gray-700 mb-4" size={40} />
+                <p className="text-gray-500 text-sm">Belum ada request distribusi dari artist.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {allDeliveryQueue.map(q => {
+                  const statusColor = {
+                    pending: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30',
+                    approved: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
+                    processing: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+                    live: 'bg-green-500/10 text-green-400 border-green-500/30',
+                    rejected: 'bg-red-500/10 text-red-400 border-red-500/30',
+                  }[q.status] || 'bg-gray-500/10 text-gray-400 border-gray-500/30';
+
+                  return (
+                    <div key={q.id} className="bg-white/[0.02] border border-white/[0.05] p-6 rounded-[2rem]">
+                      <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-2 flex-wrap">
+                            <h4 className="font-bold text-white">{q.releases?.title || 'Unknown Track'}</h4>
+                            <span className={`text-[9px] font-bold px-2 py-1 rounded-full border ${statusColor}`}>
+                              {q.status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-gray-500 font-mono space-y-1">
+                            <div>ISRC: <span className="text-blue-400">{q.releases?.isrc || q.isrc}</span> · UPC: <span className="text-blue-400">{q.releases?.upc || q.upc}</span></div>
+                            <div>Platforms: <span className="text-purple-400 font-bold">{(q.platforms || []).join(', ')}</span></div>
+                            <div>Artist: <span className="text-white">{q.profiles?.artist_stage_name || q.profiles?.full_name || 'Unknown'}</span></div>
+                            <div>Submitted: {new Date(q.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                            {q.rejection_reason && <div className="text-red-400">Alasan ditolak: {q.rejection_reason}</div>}
+                          </div>
+                        </div>
+
+                        {q.status === 'pending' && (
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await apiRequest(`/api/admin/delivery-queue/${q.id}/approve`, { method: 'POST' });
+                                  alert('✅ Distribusi disetujui! DDEX ERN 4.1 XML telah dibuat dan dikirim ke DSP.');
+                                  fetchData(session.user.id);
+                                } catch (err) { alert('❌ ' + err.message); }
+                              }}
+                              className="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-[10px] font-bold transition-all flex items-center gap-2"
+                            >
+                              <Check size={13} /> Approve & Generate DDEX
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const reason = window.prompt('Alasan penolakan (opsional):');
+                                if (reason === null) return;
+                                try {
+                                  await apiRequest(`/api/admin/delivery-queue/${q.id}/reject`, {
+                                    method: 'POST',
+                                    body: JSON.stringify({ reason })
+                                  });
+                                  alert('❌ Pengajuan distribusi ditolak.');
+                                  fetchData(session.user.id);
+                                } catch (err) { alert('❌ ' + err.message); }
+                              }}
+                              className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-5 py-2.5 rounded-xl text-[10px] font-bold transition-all uppercase"
+                            >Tolak</button>
+                          </div>
+                        )}
+
+                        {q.status === 'approved' && (
+                          <button
+                            onClick={async () => {
+                              const platformTrackId = window.prompt('Masukkan Platform Track ID (dari DSP, opsional):');
+                              if (platformTrackId === null) return;
+                              try {
+                                await apiRequest('/api/admin/distribution/confirm-live', {
+                                  method: 'POST',
+                                  body: JSON.stringify({ releaseId: q.release_id, platform: (q.platforms || ['spotify'])[0], platformTrackId })
+                                });
+                                alert('✅ Track dikonfirmasi LIVE!');
+                                fetchData(session.user.id);
+                              } catch (err) { alert('❌ ' + err.message); }
+                            }}
+                            className="bg-green-600/20 border border-green-500/30 text-green-400 px-5 py-2.5 rounded-xl text-[10px] font-bold hover:bg-green-600/30 transition-all"
+                          >
+                            ✓ Konfirmasi Live
+                          </button>
+                        )}
+
+                        {(q.status === 'live' || q.status === 'processing') && (
+                          <div className="flex flex-col gap-1 text-right">
+                            {q.approved_at && (
+                              <p className="text-[10px] text-gray-500">Approved: {new Date(q.approved_at).toLocaleDateString('id-ID')}</p>
+                            )}
+                            {q.live_at && (
+                              <p className="text-[10px] text-green-400 font-bold">Live: {new Date(q.live_at).toLocaleDateString('id-ID')}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Royalty Input Form */}
+            <div className="bg-white/[0.02] border border-white/[0.05] p-8 rounded-[2rem]">
+              <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
+                <DollarSign className="text-green-500" size={20} /> Input Royalti dari DSP
+              </h3>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                const fd = new FormData(e.target);
+                try {
+                  await apiRequest('/api/admin/royalties/input', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      releaseId: fd.get('releaseId'),
+                      platform: fd.get('platform'),
+                      streams: parseInt(fd.get('streams') || '0'),
+                      revenueUSD: parseFloat(fd.get('revenueUSD')),
+                      reportDate: fd.get('reportDate')
+                    })
+                  });
+                  alert('✅ Royalti berhasil diinput dan dikreditkan ke wallet artist!');
+                  e.target.reset();
+                  fetchData(session.user.id);
+                } catch (err) { alert('❌ ' + err.message); }
+              }} className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">Release ID</label>
+                  <select name="releaseId" required className="w-full bg-black/30 border border-white/10 p-3 rounded-xl text-sm outline-none focus:border-blue-500">
+                    <option value="">-- Pilih Release --</option>
+                    {allReleases.filter(r => r.spotify_status === 'distributed' || r.spotify_status === 'live' || r.spotify_status === 'processing').map(r => (
+                      <option key={r.id} value={r.id}>{r.title} ({r.isrc})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">Platform</label>
+                  <select name="platform" required className="w-full bg-black/30 border border-white/10 p-3 rounded-xl text-sm outline-none focus:border-blue-500">
+                    {['spotify','apple_music','youtube_music','tidal','amazon_music','deezer','joox','resso'].map(p => (
+                      <option key={p} value={p}>{p.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">Jumlah Streams</label>
+                  <input type="number" name="streams" min="0" placeholder="e.g. 10000" className="w-full bg-black/30 border border-white/10 p-3 rounded-xl text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">Revenue (USD)</label>
+                  <input type="number" name="revenueUSD" step="0.01" min="0" required placeholder="e.g. 12.50" className="w-full bg-black/30 border border-white/10 p-3 rounded-xl text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mb-2 block">Tanggal Laporan</label>
+                  <input type="date" name="reportDate" required className="w-full bg-black/30 border border-white/10 p-3 rounded-xl text-sm outline-none focus:border-blue-500" />
+                </div>
+                <div className="flex items-end">
+                  <button type="submit" className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-bold text-sm transition-all">
+                    Input Royalti → Kredit Wallet Artist
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 

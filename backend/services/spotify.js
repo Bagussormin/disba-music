@@ -1,184 +1,107 @@
+/**
+ * Spotify Service — Disba Music Aggregator
+ *
+ * CATATAN PENTING:
+ * Spotify TIDAK memiliki API distribusi publik.
+ * Distribusi ke Spotify dilakukan via DDEX ERN delivery (lihat ddex.js).
+ * Service ini hanya untuk membaca data publik Spotify (search, preview, dll).
+ *
+ * Untuk menjadi Spotify Delivery Partner resmi:
+ * https://artists.spotify.com/en/partner
+ */
 import axios from 'axios';
+import crypto from 'crypto';
 
 class SpotifyService {
   constructor() {
     this.clientId = process.env.SPOTIFY_CLIENT_ID;
     this.clientSecret = process.env.SPOTIFY_CLIENT_SECRET;
-    this.redirectUri = process.env.SPOTIFY_REDIRECT_URI;
-    this.apiBaseUrl = process.env.SPOTIFY_API_BASE_URL || 'https://api.spotify.com/v1';
+    this.apiBaseUrl = 'https://api.spotify.com/v1';
     this.authBaseUrl = 'https://accounts.spotify.com/api/token';
     this.accessToken = null;
     this.tokenExpiry = null;
   }
 
+  get isConfigured() {
+    return !!(this.clientId && this.clientSecret &&
+      !this.clientId.includes('your_') && !this.clientSecret.includes('your_'));
+  }
+
   /**
-   * Get valid Spotify access token (refresh if needed)
+   * Ambil access token menggunakan Client Credentials flow
+   * (hanya untuk endpoint publik Spotify — TIDAK bisa untuk distribusi)
    */
   async getAccessToken() {
-    // Return cached token if still valid
     if (this.accessToken && this.tokenExpiry > Date.now()) {
       return this.accessToken;
     }
 
-    try {
-      const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
-      const response = await axios.post(
-        this.authBaseUrl,
-        'grant_type=client_credentials',
-        {
-          headers: {
-            'Authorization': `Basic ${auth}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      this.accessToken = response.data.access_token;
-      this.tokenExpiry = Date.now() + (response.data.expires_in * 1000);
-      return this.accessToken;
-    } catch (error) {
-      console.error('Failed to get Spotify access token:', error.response?.data || error.message);
-      throw new Error('Failed to authenticate with Spotify API');
+    if (!this.isConfigured) {
+      throw new Error('Spotify Client ID/Secret belum dikonfigurasi.');
     }
-  }
 
-  async distributeTrack(releaseData) {
-    try {
-      const token = await this.getAccessToken();
-
-      if (!releaseData.title || !releaseData.isrc || !releaseData.audio_url) {
-        throw new Error('Missing required fields: title, isrc, audio_url');
+    const auth = Buffer.from(`${this.clientId}:${this.clientSecret}`).toString('base64');
+    const response = await axios.post(
+      this.authBaseUrl,
+      'grant_type=client_credentials',
+      {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       }
+    );
 
-      const payload = {
-        name: releaseData.title,
-        isrc: releaseData.isrc,
-        artists: [
-          {
-            name: releaseData.artist_name || 'Unknown Artist'
-          }
-        ],
-        album: {
-          name: releaseData.album_name || releaseData.title,
-          release_date: new Date().toISOString().split('T')[0],
-          images: releaseData.cover_url ? [
-            {
-              url: releaseData.cover_url,
-              height: 640,
-              width: 640
-            }
-          ] : []
-        },
-        external_ids: {
-          isrc: releaseData.isrc,
-          upc: releaseData.upc
-        },
-        explicit: releaseData.explicit_lyrics || false,
-        preview_url: releaseData.audio_url
-      };
-
-      const response = await axios.post(
-        `${this.apiBaseUrl}/me/player/queue`,
-        payload,
-        {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      console.log('Track distributed to Spotify:', {
-        title: releaseData.title,
-        isrc: releaseData.isrc,
-        timestamp: new Date().toISOString()
-      });
-
-      return {
-        success: true,
-        spotify_track_id: releaseData.isrc,
-        status: 'distributed',
-        distribution_date: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error('Spotify distribution error:', error);
-      throw error;
-    }
+    this.accessToken = response.data.access_token;
+    this.tokenExpiry = Date.now() + response.data.expires_in * 1000;
+    return this.accessToken;
   }
 
-  async getTrackAnalytics(spotifyTrackId) {
+  /**
+   * Cari track di Spotify berdasarkan ISRC
+   * (Untuk verifikasi setelah distribusi berhasil)
+   */
+  async findTrackByISRC(isrc) {
+    if (!this.isConfigured) {
+      return null;
+    }
+
     try {
       const token = await this.getAccessToken();
-
       const response = await axios.get(
-        `${this.apiBaseUrl}/tracks/${spotifyTrackId}`,
+        `${this.apiBaseUrl}/search`,
         {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
+          params: { q: `isrc:${isrc}`, type: 'track', limit: 1 },
+          headers: { Authorization: `Bearer ${token}` }
         }
       );
-
-      return {
-        streams: response.data.popularity || 0,
-        followers: response.data.followers?.total || 0,
-        popularity: response.data.popularity || 0,
-        report_date: new Date().toISOString().split('T')[0]
-      };
+      const tracks = response.data?.tracks?.items;
+      return tracks?.length > 0 ? tracks[0] : null;
     } catch (error) {
-      console.error('Failed to get track analytics:', error);
-      throw error;
+      console.error('Spotify search error:', error.response?.data || error.message);
+      return null;
     }
   }
 
-  calculateCommission(totalRevenue, commissionPercentage = 15) {
-    const commission = totalRevenue * (commissionPercentage / 100);
-    const artistPayout = totalRevenue - commission;
-
-    return {
-      totalRevenue,
-      commissionPercentage,
-      disbaCommission: commission,
-      artistPayout: artistPayout
-    };
-  }
-
-  async getWebhookStatus() {
-    try {
-      const token = await this.getAccessToken();
-      return {
-        configured: !!process.env.SPOTIFY_WEBHOOK_SECRET,
-        apiConnected: !!token,
-        status: 'active'
-      };
-    } catch (error) {
-      return {
-        configured: !!process.env.SPOTIFY_WEBHOOK_SECRET,
-        apiConnected: false,
-        status: 'error',
-        error: error.message
-      };
-    }
-  }
-
-
-
+  /**
+   * Verifikasi status HMAC webhook dari Spotify
+   */
   verifyWebhookSignature(payload, signature) {
-    const crypto = require('crypto');
     const secret = process.env.SPOTIFY_WEBHOOK_SECRET;
-    
-    if (!secret) {
-      console.error('SPOTIFY_WEBHOOK_SECRET not configured');
-      return false;
-    }
-    
+    if (!secret) return false;
     const hash = crypto
       .createHmac('sha256', secret)
-      .update(JSON.stringify(payload))
+      .update(typeof payload === 'string' ? payload : JSON.stringify(payload))
       .digest('hex');
+    return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+  }
 
-    return hash === signature;
+  async getStatus() {
+    return {
+      configured: this.isConfigured,
+      note: 'Distribusi ke Spotify dilakukan via DDEX ERN 4.1 workflow — bukan Spotify API langsung.',
+      deliveryMethod: 'DDEX ERN 4.1'
+    };
   }
 }
 
