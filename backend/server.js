@@ -3,29 +3,40 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import distributionService from './services/distribution.js';
 import spotifyService from './services/spotify.js';
 import ddexService from './services/ddex.js';
 
 dotenv.config();
 
-const {
-  FRONTEND_URL,
-  SUPABASE_SERVICE_ROLE_KEY,
-  VITE_SUPABASE_URL,
-  PORT
-} = process.env;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
+const PORT_FINAL = process.env.PORT || 3001;
+const FRONTEND_URL_FINAL = process.env.FRONTEND_URL || 'https://disba-music.vercel.app';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'disba_music_default_secret_2026';
 
-if (!SUPABASE_SERVICE_ROLE_KEY || !VITE_SUPABASE_URL) {
-  throw new Error('Missing required environment variables: VITE_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY');
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('❌ CRITICAL ERROR: Missing Supabase credentials.');
+  console.error('Please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in your production environment.');
+  process.exit(1);
 }
 
 const app = express();
-const frontendUrl = FRONTEND_URL || 'http://localhost:5173';
+const frontendUrl = FRONTEND_URL_FINAL;
 const minimumWithdrawalAmount = 50000;
 
-const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { autoRefreshToken: false, persistSession: false }
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { autoRefreshToken: false, persistSession: false },
+  realtime: {
+    transport: ws,
+    params: {
+      eventsPerSecond: 10
+    }
+  },
+  global: {
+    fetch: (...args) => fetch(...args)
+  }
 });
 
 // ============================================================
@@ -33,7 +44,9 @@ const supabase = createClient(VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 // ============================================================
 
 app.use(cors({
-  origin: [frontendUrl, 'http://localhost:5173', 'https://disba-music.vercel.app'],
+  origin: process.env.NODE_ENV === 'production' 
+    ? [frontendUrl, 'https://disba-music.vercel.app'] 
+    : [frontendUrl, 'http://localhost:5173', 'https://disba-music.vercel.app'],
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -696,7 +709,7 @@ app.get('/api/spotify/analytics/:releaseId', requireAuth, async (req, res) => {
 // START SERVER
 // ============================================================
 
-const port = PORT || 3001;
+const port = PORT_FINAL;
 app.listen(port, () => {
   console.log(`🎵 Disba Music Aggregator Backend — Port ${port}`);
   console.log(`📡 Frontend URL: ${frontendUrl}`);

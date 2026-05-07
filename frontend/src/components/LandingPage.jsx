@@ -1,321 +1,382 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  Disc3, Play, Activity, Settings, Zap, Music, DollarSign,
-  Instagram, Twitter, Youtube, Mail, ArrowRight, Check,
-  Headphones, X
+  Disc3, Play, Activity, Zap, Music, Instagram, Twitter, Youtube, 
+  ArrowRight, Check, Headphones, X, Flame, Star, TrendingUp, Users, Calendar, MapPin, Heart
 } from 'lucide-react';
 import logo from '../assets/logo-disba.png';
+import heroBg from '../assets/hero-bg.png';
+import dj1 from '../assets/dj-1.png';
+import dj2 from '../assets/dj-2.png';
+import event1 from '../assets/event-1.png';
 
 const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminClickCount, onAdminClick }) => {
   const [isSignUp, setIsSignUp] = useState(false);
-  const partners = [
-    { name: 'Spotify', icon: <Disc3 size={32} /> },
-    { name: 'Apple Music', icon: <Music size={32} /> },
-    { name: 'Instagram', icon: <Instagram size={32} /> },
-    { name: 'TikTok', icon: <Activity size={32} /> },
-    { name: 'YouTube Music', icon: <Youtube size={32} /> },
-    { name: 'Amazon Music', icon: <Zap size={32} /> },
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const trendingDJs = [
+    { name: 'DJ Vortex', rank: 1, plays: '1.2M', likes: '45k', image: dj1, badge: 'Trending' },
+    { name: 'Luna Ray', rank: 2, plays: '890k', likes: '32k', image: dj2, badge: 'Rising' },
+    { name: 'Nova Pulse', rank: 3, plays: '750k', likes: '28k', image: dj1, badge: 'Hot' },
+    { name: 'Zenith', rank: 4, plays: '620k', likes: '21k', image: dj2, badge: 'Top 10' },
   ];
 
-  const sessions = [
-    { title: 'Nana Darby - Full session', link: '#' },
-    { title: 'Luke Moss - Full session', link: '#' },
-    { title: 'Oh - Full Session', link: '#' },
-    { title: 'Tinnedfruit - Full session', link: '#' },
-    { title: 'Soot Sprite - Full session', link: '#' },
-    { title: 'Sam Brockington - Full session', link: '#' },
-    { title: 'Slightly - Full session', link: '#' },
-    { title: 'School Disco - Full session', link: '#' },
-    { title: 'King Creature - Full session', link: '#' },
+  const hotEvents = [
+    { title: 'Neon Pulse Night', venue: 'Skyline Lounge', date: 'Tonight', image: event1, status: 'Almost Full', color: 'bg-red-500' },
+    { title: 'Techno Underground', venue: 'The Vault', date: 'Friday', image: event1, status: 'Hot This Week', color: 'bg-orange-500' },
+    { title: 'Bass Drop 2024', venue: 'Arena Stage', date: 'Saturday', image: event1, status: 'Selling Fast', color: 'bg-blue-500' },
+  ];
+
+  const trendingRemixes = [
+    { title: 'Midnight Drive (Remix)', artist: 'DJ Vortex', plays: '250k', image: dj1 },
+    { title: 'Neon Lights (Deep Mix)', artist: 'Luna Ray', plays: '180k', image: dj2 },
+    { title: 'Summer Ghost', artist: 'Nova Pulse', plays: '145k', image: dj1 },
   ];
 
   return (
-    <div className="min-h-screen bg-[#07090E] text-white selection:bg-blue-500/30 font-sans">
+    <div className="min-h-screen bg-[#07090E] text-white selection:bg-blue-500/30 font-sans relative overflow-x-hidden">
       
-      {/* Background glow retained */}
-      <div className="fixed inset-0 z-0 pointer-events-none">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/10 blur-[150px] animate-pulse"></div>
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-white/5 blur-[150px] animate-pulse"></div>
+      {/* Background noise and glows */}
+      <div className="fixed inset-0 z-0 pointer-events-none noise"></div>
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+        <div className="absolute top-[-10%] right-[-10%] w-[600px] h-[600px] bg-blue-600/10 blur-[120px] rounded-full animate-pulse"></div>
+        <div className="absolute bottom-[-10%] left-[-10%] w-[600px] h-[600px] bg-purple-600/10 blur-[120px] rounded-full animate-pulse" style={{ animationDelay: '1s' }}></div>
       </div>
 
-      {/* Navbar Minimalist */}
-      <nav className="fixed top-0 w-full z-[100] transition-all border-b border-white/5 bg-[#07090E]/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3 group cursor-pointer">
-            <img src={logo} alt="Disba Logo" className="h-10 w-auto group-hover:scale-110 transition-transform" />
-            <h1 className="text-xl font-black tracking-tight">DISBA</h1>
+      {/* Navbar */}
+      <nav className={`fixed top-0 w-full z-[100] transition-all duration-300 border-b ${scrolled ? 'bg-[#07090E]/90 backdrop-blur-xl border-white/10 py-3' : 'bg-transparent border-transparent py-5'}`}>
+        <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3 group cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+            <img src={logo} alt="Disba Logo" className="h-10 w-auto group-hover:scale-110 transition-transform duration-500" />
+            <h1 className="text-xl font-black tracking-tighter text-glow-blue">DISBA</h1>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-6">
             <button 
               onClick={() => { setIsSignUp(false); setShowLogin(true); }}
-              className="text-sm font-bold text-gray-300 hover:text-white transition-colors hidden sm:block"
+              className="text-sm font-bold text-gray-400 hover:text-white transition-colors hidden sm:block uppercase tracking-widest"
             >
               Log in
             </button>
             <button 
               onClick={() => { setIsSignUp(true); setShowLogin(true); }}
-              className="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded-full font-bold text-sm shadow-lg shadow-blue-600/20 transition-all font-sans"
+              className="bg-white text-black hover:bg-blue-500 hover:text-white px-8 py-2.5 rounded-full font-black text-sm transition-all duration-300 shadow-lg hover:shadow-blue-500/40"
             >
-              Sign up
+              JOIN THE MOVEMENT
             </button>
           </div>
         </div>
       </nav>
 
       {/* Hero Section */}
-      <header className="relative pt-48 pb-32 overflow-hidden flex flex-col items-center justify-center text-center px-6">
-        <div className="relative z-10 max-w-4xl space-y-10">
-          <h2 className="text-5xl md:text-[5.5rem] font-black tracking-tight leading-[1] text-white">
-            Music distribution <br />
-            <span className="text-blue-500">simplified</span>
-          </h2>
-          
-          <div className="space-y-6 max-w-2xl mx-auto pt-4">
-            <p className="text-xl md:text-2xl font-medium text-gray-200">
-              Stream and sell your music around the world on Spotify, Apple Music, and more!
-            </p>
-            <p className="text-lg md:text-xl text-gray-400">
-              Choose from our <span className="text-white font-bold">FREE</span> text or <span className="text-white font-bold">Premium</span> service (keep 100% of the royalties)
-            </p>
+      <header className="relative min-h-screen flex items-center justify-center px-6 pt-20 overflow-hidden">
+        {/* Cinematic Background Image */}
+        <div className="absolute inset-0 z-0">
+          <img src={heroBg} alt="Nightlife" className="w-full h-full object-cover opacity-40 scale-105" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#07090E] via-[#07090E]/60 to-transparent"></div>
+          <div className="absolute inset-0 bg-gradient-to-b from-[#07090E]/40 via-transparent to-transparent"></div>
+        </div>
+
+        <div className="relative z-10 max-w-5xl text-center space-y-12">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-black uppercase tracking-[0.2em]">
+            <Flame size={14} className="animate-pulse" />
+            Voted #1 Nightlife Platform
           </div>
           
-          <div className="pt-8">
+          <h2 className="text-6xl md:text-[7rem] font-black tracking-tighter leading-[0.9] text-white uppercase italic">
+            Discover <br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600 text-glow-blue">Who Runs</span> <br />
+            The Night.
+          </h2>
+          
+          <p className="text-xl md:text-2xl font-medium text-gray-300 max-w-2xl mx-auto leading-relaxed">
+            Discover trending DJs, hottest events, and rising nightlife culture in your city.
+          </p>
+          
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 pt-4">
             <button 
               onClick={() => setShowLogin(true)}
-              className="bg-blue-600 hover:bg-blue-500 text-white px-12 py-5 rounded-full font-black text-xl shadow-xl shadow-blue-600/30 transition-all hover:-translate-y-1"
+              className="group relative bg-blue-600 hover:bg-blue-500 text-white px-12 py-5 rounded-full font-black text-xl transition-all duration-300 hover:scale-105 hover:shadow-[0_0_40px_rgba(37,99,235,0.4)] flex items-center gap-3"
             >
-              Get Started Now
+              EXPLORE DJs
+              <ArrowRight size={24} className="group-hover:translate-x-2 transition-transform" />
+            </button>
+            <button 
+              onClick={() => setShowLogin(true)}
+              className="px-12 py-5 rounded-full font-black text-xl border-2 border-white/20 hover:border-white hover:bg-white/5 transition-all duration-300"
+            >
+              TRENDING THIS WEEK
             </button>
           </div>
         </div>
+
+        {/* Scroll Indicator */}
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 animate-bounce opacity-30">
+          <div className="w-1 h-12 bg-gradient-to-b from-white to-transparent rounded-full"></div>
+        </div>
       </header>
 
-      {/* Numbers Section */}
-      <section className="py-32 relative border-t border-white/5 bg-white/[0.02]">
-        <div className="max-w-7xl mx-auto px-6 text-center space-y-20">
-          <div className="max-w-3xl mx-auto space-y-6">
-            <h3 className="text-4xl md:text-6xl font-black tracking-tight">The numbers speak for themselves</h3>
-            <p className="text-xl text-gray-400">
-              We're the leading digital music distributor in Asia, working with new artists every day and partnering with new services all the time to get their music heard around the world.
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-12 pt-8">
-            <div className="space-y-4">
-              <h4 className="text-6xl md:text-8xl font-black text-blue-500">95%</h4>
-              <p className="text-xl font-bold text-gray-300 uppercase tracking-widest">Market Coverage</p>
-            </div>
-            <div className="space-y-4">
-              <h4 className="text-6xl md:text-8xl font-black text-white">67.9k+</h4>
-              <p className="text-xl font-bold text-gray-300 uppercase tracking-widest">Artists</p>
-            </div>
-            <div className="space-y-4">
-              <h4 className="text-6xl md:text-8xl font-black text-white">283.8k+</h4>
-              <p className="text-xl font-bold text-gray-300 uppercase tracking-widest">Tracks</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* How it works */}
-      <section id="how-it-works" className="py-32 relative">
+      {/* Section 1: Trending DJs */}
+      <section className="py-32 relative z-10 bg-nightlife">
         <div className="max-w-7xl mx-auto px-6">
-          <h3 className="text-4xl md:text-6xl font-black tracking-tight text-center mb-24">How it works</h3>
-          
-          <div className="grid md:grid-cols-4 gap-8">
-            {[
-              { step: '1', title: 'Upload', desc: 'Upload your tracks, artwork and metadata' },
-              { step: '2', title: 'Select Stores', desc: 'Choose where you want your music to be heard' },
-              { step: '3', title: 'Choose Plan', desc: 'Select our Free or Premium plan' },
-              { step: '4', title: 'Get Paid', desc: 'Keep 100% of your rights and earn royalties' },
-            ].map((f, i) => (
-              <div key={i} className="glass p-10 rounded-[2.5rem] relative text-center group hover:border-blue-500/50 transition-colors shadow-2xl">
-                <div className="w-20 h-20 bg-blue-600 rounded-full flex items-center justify-center text-4xl font-black mx-auto mb-8 shadow-lg shadow-blue-600/40 text-white">
-                  {f.step}
+          <div className="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-blue-500 font-black uppercase tracking-widest text-sm">
+                <TrendingUp size={18} />
+                Live Charts
+              </div>
+              <h3 className="text-5xl md:text-7xl font-black tracking-tighter uppercase italic">Trending DJs <span className="text-gray-700">/ This Week</span></h3>
+            </div>
+            <button className="text-gray-400 hover:text-white font-bold flex items-center gap-2 group transition-colors">
+              VIEW ALL RANKINGS <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {trendingDJs.map((dj, i) => (
+              <div key={i} className="group relative glass rounded-[2rem] overflow-hidden transition-all duration-500 hover:-translate-y-2 hover:border-blue-500/50 hover:shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+                <div className="aspect-[4/5] relative overflow-hidden">
+                  <img src={dj.image} alt={dj.name} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent"></div>
+                  
+                  {/* Rank Badge */}
+                  <div className="absolute top-6 left-6 w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center font-black text-xl shadow-lg border-2 border-white/20">
+                    {dj.rank}
+                  </div>
+
+                  {/* Trending Badge */}
+                  <div className="absolute top-6 right-6 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-[10px] font-black uppercase tracking-widest">
+                    {dj.badge}
+                  </div>
+
+                  {/* Stats Overlay */}
+                  <div className="absolute bottom-6 left-6 right-6 space-y-2">
+                    <h4 className="text-2xl font-black uppercase italic tracking-tighter">{dj.name}</h4>
+                    <div className="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-widest">
+                      <span className="flex items-center gap-1.5"><Play size={12} className="text-blue-500" /> {dj.plays} PLAYS</span>
+                      <span className="flex items-center gap-1.5"><Heart size={12} className="text-pink-500" /> {dj.likes} LIKES</span>
+                    </div>
+                  </div>
                 </div>
-                <h4 className="text-2xl font-bold mb-4">{f.title}</h4>
-                <p className="text-gray-400 font-medium">{f.desc}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Partners */}
-      <section id="stores" className="py-32 bg-white/[0.02] border-y border-white/5">
-        <div className="max-w-7xl mx-auto px-6 text-center space-y-16">
-          <div className="max-w-4xl mx-auto space-y-6">
-            <h3 className="text-4xl md:text-6xl font-black tracking-tight">Distribute to the largest music platforms</h3>
-            <p className="text-xl text-gray-400">
-              We are currently partnered with over 50 of the biggest digital platforms and we're always adding more.
-            </p>
+      {/* Section 2: Hot Events */}
+      <section className="py-32 relative border-y border-white/5 bg-white/[0.01]">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex items-center justify-center gap-4 mb-16">
+            <div className="h-px flex-1 bg-gradient-to-r from-transparent to-white/10"></div>
+            <h3 className="text-4xl md:text-6xl font-black tracking-tighter uppercase italic text-center px-8">Hot Events <span className="text-blue-500">Nearby</span></h3>
+            <div className="h-px flex-1 bg-gradient-to-l from-transparent to-white/10"></div>
           </div>
-          
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-8 items-center justify-center pt-8 opacity-70">
-            {partners.map((p, i) => (
-              <div key={i} className="flex flex-col items-center gap-4 hover:opacity-100 transition-opacity hover:text-blue-400 cursor-pointer">
-                {p.icon}
-                <span className="font-bold text-sm tracking-wider uppercase">{p.name}</span>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            {hotEvents.map((event, i) => (
+              <div key={i} className="group glass-dark rounded-3xl overflow-hidden border-white/[0.03] hover:border-white/20 transition-all duration-300">
+                <div className="h-64 relative overflow-hidden">
+                  <img src={event.image} alt={event.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  <div className="absolute inset-0 bg-black/40 group-hover:bg-black/20 transition-colors"></div>
+                  <div className={`absolute top-4 right-4 px-4 py-1.5 rounded-full ${event.color} text-[10px] font-black uppercase tracking-widest shadow-lg animate-pulse`}>
+                    {event.status}
+                  </div>
+                </div>
+                <div className="p-8 space-y-6">
+                  <div className="flex justify-between items-start">
+                    <h4 className="text-2xl font-black uppercase tracking-tight leading-tight">{event.title}</h4>
+                    <div className="text-right">
+                      <div className="text-blue-500 font-black text-lg">{event.date}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-6 text-sm text-gray-400 font-bold uppercase tracking-wider">
+                    <span className="flex items-center gap-2"><MapPin size={16} className="text-blue-500" /> {event.venue}</span>
+                  </div>
+                  <button onClick={() => setShowLogin(true)} className="w-full py-4 rounded-xl border border-white/10 hover:bg-white hover:text-black font-black text-sm uppercase tracking-widest transition-all">
+                    GET TICKETS
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Pricing */}
-      <section id="pricing" className="py-32 relative">
-        <div className="max-w-7xl mx-auto px-6 text-center space-y-20">
-          <div className="max-w-4xl mx-auto space-y-8">
-            <h3 className="text-4xl md:text-6xl font-black tracking-tight leading-tight">
-              Our Free and Premium plans offer the most flexible pricing for music distribution
-            </h3>
-            <p className="text-2xl font-bold text-blue-400">
-              You can change payment model at any time!
-            </p>
+      {/* Section 3: Trending Remix */}
+      <section className="py-32">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="text-center space-y-4 mb-20">
+            <h3 className="text-5xl md:text-7xl font-black tracking-tighter uppercase italic">Trending Remixes</h3>
+            <p className="text-xl text-gray-400 font-medium italic">Perception &gt; Feature. Hear the future of nightlife.</p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto pt-8">
-            <div className="glass p-14 rounded-[3rem] text-left hover:border-white/20 transition-all">
-              <h4 className="text-4xl font-black mb-4">Free</h4>
-              <p className="text-gray-400 mb-10 text-xl">No upfront costs. You keep 85% of royalties.</p>
-              <ul className="space-y-6 mb-16">
-                {['Zero upfront fees', 'Unlimited uploads', 'All platform features included', 'Keep 85% royalties'].map((item, i) => (
-                  <li key={i} className="flex items-center gap-4 text-xl">
-                    <Check className="text-blue-500" size={28} />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-              <button 
-                onClick={() => setShowLogin(true)}
-                className="w-full bg-white/10 hover:bg-white/20 py-5 rounded-full font-bold text-xl transition-colors border border-white/10"
-              >
-                Sign Up Free
-              </button>
-            </div>
+          <div className="space-y-6 max-w-5xl mx-auto">
+            {trendingRemixes.map((remix, i) => (
+              <div key={i} className="glass p-4 sm:p-6 rounded-3xl flex flex-col sm:flex-row items-center gap-8 group hover:bg-white/5 transition-all">
+                <div className="w-24 h-24 rounded-2xl overflow-hidden relative flex-shrink-0">
+                  <img src={remix.image} alt={remix.title} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/40 group-hover:bg-blue-600/60 transition-colors cursor-pointer">
+                    <Play fill="white" size={32} />
+                  </div>
+                </div>
+                
+                <div className="flex-1 space-y-2 text-center sm:text-left">
+                  <h4 className="text-2xl font-black uppercase tracking-tight">{remix.title}</h4>
+                  <p className="text-blue-400 font-bold uppercase text-sm tracking-widest">{remix.artist}</p>
+                </div>
 
-            <div className="bg-gradient-to-br from-blue-600 to-[#0A2540] p-14 rounded-[3rem] text-left relative overflow-hidden group hover:shadow-2xl hover:shadow-blue-600/20 transition-all">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl group-hover:scale-110 transition-transform"></div>
-              <h4 className="text-4xl font-black mb-4 text-white">Premium</h4>
-              <p className="text-blue-200 mb-10 text-xl font-medium">Small upfront fee. Keep 100% of your royalties forever.</p>
-              <ul className="space-y-6 mb-16">
-                {['Single - $10', 'EP - $20', 'Album - $30', 'Extended Album - $45', 'Keep 100% royalties'].map((item, i) => (
-                  <li key={i} className="flex items-center gap-4 text-xl font-medium text-white">
-                    <Check className="text-white" size={28} />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-              <button 
-                onClick={() => setShowLogin(true)}
-                className="w-full bg-white text-blue-900 hover:bg-gray-100 py-5 rounded-full font-black text-xl transition-colors shadow-xl"
-              >
-                Upgrade to Premium
-              </button>
-            </div>
+                <div className="hidden lg:block flex-[2] px-8 opacity-40 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 h-12">
+                    {[...Array(40)].map((_, j) => (
+                      <div key={j} className="w-1 bg-blue-500 rounded-full transition-all duration-300" style={{ height: `${Math.random() * 100}%` }}></div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-6">
+                  <div className="text-right">
+                    <div className="text-xs font-black text-gray-500 uppercase tracking-[0.2em]">Plays</div>
+                    <div className="text-xl font-black">{remix.plays}</div>
+                  </div>
+                  <div className="px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-black uppercase tracking-widest">
+                    Hot
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* Sessions */}
-      <section className="py-32 bg-white/[0.02] border-y border-white/5">
-        <div className="max-w-7xl mx-auto px-6 space-y-20">
-          <div className="max-w-4xl space-y-6 text-center mx-auto">
-            <h3 className="text-4xl md:text-6xl font-black tracking-tight">Disba Sessions showcases exciting, new independent artists</h3>
-            <p className="text-xl text-gray-400 leading-relaxed pt-4">
-              Our live sessions feature some of the hottest rising artists from all walks of life. Join us as we bring these amazing bands and artists to the global stage with each session.
-            </p>
-          </div>
+      {/* Section 4: Why DJs Use Disba */}
+      <section className="py-32 relative overflow-hidden">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-blue-600/5 blur-[150px] rounded-full"></div>
+        <div className="max-w-7xl mx-auto px-6 relative z-10">
+          <div className="grid lg:grid-cols-2 gap-20 items-center">
+            <div className="space-y-8">
+              <h3 className="text-5xl md:text-7xl font-black tracking-tighter uppercase italic leading-[0.9]">
+                Why DJs <br />
+                <span className="text-blue-500">Dominate</span> <br />
+                With Disba
+              </h3>
+              <p className="text-xl text-gray-400 leading-relaxed max-w-lg">
+                Stop being just another technical file. Start being the movement. We give you the tools to climb charts and get booked.
+              </p>
+              <div className="pt-4">
+                <button 
+                  onClick={() => setShowLogin(true)}
+                  className="bg-white text-black px-12 py-5 rounded-full font-black text-xl hover:bg-blue-500 hover:text-white transition-all shadow-xl hover:shadow-blue-500/30"
+                >
+                  START YOUR CAREER
+                </button>
+              </div>
+            </div>
 
-          <div className="grid md:grid-cols-3 gap-6 max-w-6xl mx-auto">
-            {sessions.map((s, i) => (
-              <a key={i} href={s.link} className="glass p-6 rounded-2xl flex items-center gap-4 hover:bg-white/10 transition-colors group cursor-pointer border border-white/10 hover:border-white/20">
-                <div className="w-14 h-14 bg-red-600 rounded-full flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform shadow-lg shadow-red-600/40">
-                  <Play size={24} className="text-white ml-1 filter drop-shadow-md" />
+            <div className="grid sm:grid-cols-2 gap-6">
+              {[
+                { title: 'Build Your Name', desc: 'Transform from a local DJ to a recognized brand.', icon: <Users size={32} /> },
+                { title: 'Get Discovered', desc: 'Direct visibility to club owners and event organizers.', icon: <Flame size={32} /> },
+                { title: 'Climb Local Charts', desc: 'Our unique ranking system puts you in the spotlight.', icon: <TrendingUp size={32} /> },
+                { title: 'Turn Bookings', desc: 'Direct link from your trending remixes to your booking inbox.', icon: <Calendar size={32} /> },
+              ].map((item, i) => (
+                <div key={i} className="glass p-8 rounded-[2.5rem] space-y-6 hover:border-blue-500/40 transition-colors">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-500">
+                    {item.icon}
+                  </div>
+                  <div className="space-y-3">
+                    <h4 className="text-2xl font-black uppercase italic tracking-tight">{item.title}</h4>
+                    <p className="text-gray-400 font-medium text-sm leading-relaxed">{item.desc}</p>
+                  </div>
                 </div>
-                <span className="font-bold text-[15px]">{s.title}</span>
-              </a>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="pt-32 pb-16">
+      <footer className="pt-32 pb-16 bg-black">
         <div className="max-w-7xl mx-auto px-6 grid md:grid-cols-4 gap-12 mb-20">
-          <div className="space-y-6 md:col-span-1">
+          <div className="space-y-8 md:col-span-1">
             <div className="flex items-center gap-3">
               <img src={logo} alt="Disba Logo" className="h-12 w-auto" />
-              <h1 className="text-3xl font-black tracking-tight">DISBA</h1>
+              <h1 className="text-3xl font-black tracking-tighter text-glow-blue italic">DISBA</h1>
             </div>
-            <p className="text-gray-500 text-base">
-              Music distribution simplified.
+            <p className="text-gray-500 text-base leading-relaxed">
+              The central hub for local nightlife culture. Discover, climb, and get booked.
             </p>
             <div className="flex items-center gap-4 pt-4">
-              <a href="#" className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"><Instagram size={20} /></a>
-              <a href="#" className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"><Twitter size={20} /></a>
-              <a href="#" className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-colors"><Youtube size={20} /></a>
+              <a href="#" className="w-12 h-12 rounded-full glass flex items-center justify-center text-gray-400 hover:text-white hover:border-blue-500/50 transition-all"><Instagram size={24} /></a>
+              <a href="#" className="w-12 h-12 rounded-full glass flex items-center justify-center text-gray-400 hover:text-white hover:border-blue-500/50 transition-all"><Twitter size={24} /></a>
+              <a href="#" className="w-12 h-12 rounded-full glass flex items-center justify-center text-gray-400 hover:text-white hover:border-blue-500/50 transition-all"><Youtube size={24} /></a>
             </div>
           </div>
 
           <div>
-            <h5 className="font-bold mb-8 text-lg">Distribution</h5>
-            <ul className="space-y-5 text-gray-400 text-base">
-              <li><a href="#pricing" className="hover:text-blue-400 transition-colors cursor-pointer">Pricing</a></li>
-              <li><a href="#how-it-works" className="hover:text-blue-400 transition-colors cursor-pointer">How it works</a></li>
-              <li><a href="#stores" className="hover:text-blue-400 transition-colors cursor-pointer">Stores</a></li>
+            <h5 className="font-black mb-8 text-lg uppercase tracking-widest text-white/50">Discover</h5>
+            <ul className="space-y-5 text-gray-400 text-base font-bold uppercase tracking-wider">
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Top DJs</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Hot Events</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Charts</a></li>
             </ul>
           </div>
 
           <div>
-            <h5 className="font-bold mb-8 text-lg">Services</h5>
-            <ul className="space-y-5 text-gray-400 text-base">
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">Publishing</a></li>
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">YouTube Network</a></li>
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">SoundCloud Network</a></li>
+            <h5 className="font-black mb-8 text-lg uppercase tracking-widest text-white/50">For DJs</h5>
+            <ul className="space-y-5 text-gray-400 text-base font-bold uppercase tracking-wider">
+              <li><a href="#pricing" className="hover:text-blue-400 transition-colors">Pricing</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Benefits</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Success Stories</a></li>
             </ul>
           </div>
 
           <div>
-            <h5 className="font-bold mb-8 text-lg">Company</h5>
-            <ul className="space-y-5 text-gray-400 text-base">
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">About Us</a></li>
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">Terms of Use</a></li>
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">Privacy Policy</a></li>
-              <li><a href="#" className="hover:text-blue-400 transition-colors cursor-pointer">Contact</a></li>
+            <h5 className="font-black mb-8 text-lg uppercase tracking-widest text-white/50">Company</h5>
+            <ul className="space-y-5 text-gray-400 text-base font-bold uppercase tracking-wider">
+              <li><a href="#" className="hover:text-blue-400 transition-colors">About Us</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Contact</a></li>
+              <li><a href="#" className="hover:text-blue-400 transition-colors">Terms</a></li>
             </ul>
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-6 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p 
-            onClick={onAdminClick}
-            className="text-gray-600 text-sm cursor-pointer hover:text-blue-500 transition-colors font-medium"
-          >
-            © {new Date().getFullYear()} Disba Music. All rights reserved. {adminClickCount > 0 && `[${adminClickCount}/5]`}
+        <div className="max-w-7xl mx-auto px-6 pt-12 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-6">
+          <p onClick={onAdminClick} className="text-gray-700 text-sm cursor-pointer hover:text-blue-500 transition-colors font-bold tracking-widest uppercase">
+            © {new Date().getFullYear()} DISBA NIGHTLIFE MOVEMENT. {adminClickCount > 0 && `[${adminClickCount}/5]`}
           </p>
+          <div className="flex items-center gap-8 text-xs font-black uppercase tracking-[0.3em] text-gray-700">
+            <span>Privasi</span>
+            <span>Terms</span>
+            <span>Cookies</span>
+          </div>
         </div>
       </footer>
 
-      {/* Login / Signup Modal */}
       {showLogin && (
-        <div className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-[#0f1219] border border-white/10 w-full max-w-md p-8 rounded-3xl shadow-2xl relative">
+        <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-[#0f1219] border border-white/10 w-full max-w-md p-10 rounded-[3rem] shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/10 blur-3xl rounded-full"></div>
+            
             <button 
               onClick={() => setShowLogin(false)}
-              className="absolute top-6 right-6 text-gray-400 hover:text-white transition-colors"
+              className="absolute top-8 right-8 text-gray-500 hover:text-white transition-colors"
             >
               <X size={24} />
             </button>
 
-            <div className="flex items-center gap-3 mb-8">
+            <div className="flex items-center gap-3 mb-12">
               <img src={logo} alt="Disba Logo" className="h-10 w-auto" />
-              <h1 className="text-2xl font-black tracking-tight">DISBA</h1>
+              <h1 className="text-2xl font-black tracking-tighter italic">DISBA</h1>
             </div>
 
-            <h2 className="text-xl font-bold mb-6">
-              {isSignUp ? 'Create your account' : 'Welcome back'}
+            <h2 className="text-3xl font-black mb-8 uppercase italic tracking-tight">
+              {isSignUp ? 'Join The Movement' : 'Welcome Back'}
             </h2>
 
             <form 
@@ -323,40 +384,38 @@ const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminCli
                 e.preventDefault(); 
                 onLogin(e.target.email.value, e.target.password.value, isSignUp); 
               }} 
-              className="space-y-4"
+              className="space-y-6"
             >
               <div>
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">Email address</label>
-                <input name="email" type="email" placeholder="you@example.com" required className="w-full bg-black/40 border border-white/10 px-5 py-4 rounded-xl text-white outline-none focus:border-blue-500 transition-colors" />
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] mb-3 block">Email address</label>
+                <input name="email" type="email" placeholder="YOU@EXAMPLE.COM" required className="w-full bg-white/5 border border-white/10 px-6 py-5 rounded-2xl text-white outline-none focus:border-blue-500 transition-all font-bold tracking-widest placeholder:text-gray-700" />
               </div>
-              <div className="mb-6">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2 block">Password</label>
-                <input name="password" type="password" placeholder="••••••••" required className="w-full bg-black/40 border border-white/10 px-5 py-4 rounded-xl text-white outline-none focus:border-blue-500 transition-colors" />
+              <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em] mb-3 block">Password</label>
+                <input name="password" type="password" placeholder="••••••••" required className="w-full bg-white/5 border border-white/10 px-6 py-5 rounded-2xl text-white outline-none focus:border-blue-500 transition-all font-bold tracking-widest placeholder:text-gray-700" />
               </div>
               
-              <div className="flex flex-col gap-3 pt-2">
-                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/20 active:scale-95">
-                  {isSignUp ? 'Sign up' : 'Log in'}
-                </button>
-              </div>
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white py-5 rounded-2xl font-black text-lg transition-all shadow-lg shadow-blue-600/20 active:scale-95 uppercase tracking-widest mt-4">
+                {isSignUp ? 'Create Account' : 'Enter The Club'}
+              </button>
             </form>
 
-            <div className="mt-8 flex items-center gap-4 before:flex-1 before:h-px before:bg-white/10 after:flex-1 after:h-px after:bg-white/10">
-              <span className="text-gray-500 text-sm font-bold">OR</span>
+            <div className="mt-10 flex items-center gap-4 before:flex-1 before:h-px before:bg-white/5 after:flex-1 after:h-px after:bg-white/5">
+              <span className="text-gray-700 text-xs font-black uppercase tracking-widest">OR</span>
             </div>
             
             <button 
               onClick={onGoogleLogin}
-              className="w-full mt-8 bg-white/5 border border-white/10 px-6 py-4 rounded-xl hover:bg-white/10 transition-all flex items-center justify-center gap-3 font-bold group"
+              className="w-full mt-10 bg-white/5 border border-white/10 px-6 py-5 rounded-2xl hover:bg-white/10 transition-all flex items-center justify-center gap-4 font-black uppercase tracking-widest group"
             >
               <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google" className="w-5 h-5 group-hover:scale-110 transition-transform" />
               Continue with Google
             </button>
 
-            <p className="text-center text-sm text-gray-500 mt-8 font-medium">
-              {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-              <button type="button" onClick={() => setIsSignUp(!isSignUp)} className="text-blue-400 hover:text-white font-bold transition-colors">
-                {isSignUp ? 'Log in' : 'Sign up'}
+            <p className="text-center text-sm text-gray-500 mt-10 font-bold uppercase tracking-widest">
+              {isSignUp ? 'Already a member?' : "Not a member yet?"}{' '}
+              <button type="button" onClick={() => setIsSignUp(!isSignUp)} className="text-blue-500 hover:text-white transition-colors">
+                {isSignUp ? 'Login' : 'Sign Up'}
               </button>
             </p>
           </div>

@@ -265,11 +265,42 @@ ALTER TABLE public.releases ADD COLUMN IF NOT EXISTS copyright_year INT DEFAULT 
 ALTER TABLE public.releases ADD COLUMN IF NOT EXISTS copyright_holder TEXT;
 ALTER TABLE public.releases ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
-ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS type TEXT;
-ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'pending';
-ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS payment_method TEXT;
-ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transaction_ref TEXT;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS description TEXT;
+
+-- Spotify Distributions (New Columns for Multi-Platform)
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform TEXT NOT NULL DEFAULT 'spotify';
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform_track_id TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS platform_uri TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS ddex_ref TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS ddex_xml TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS delivery_format TEXT DEFAULT 'ddex_ern41';
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS delivery_batch_id TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS delivery_note TEXT;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS distribution_date TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS estimated_live_date TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS live_date TIMESTAMP WITH TIME ZONE;
+ALTER TABLE public.spotify_distributions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- Spotify Analytics (New Columns)
+ALTER TABLE public.spotify_analytics ADD COLUMN IF NOT EXISTS platform TEXT DEFAULT 'spotify';
+ALTER TABLE public.spotify_analytics ADD COLUMN IF NOT EXISTS disba_commission NUMERIC DEFAULT 0.00;
+ALTER TABLE public.spotify_analytics ADD COLUMN IF NOT EXISTS artist_payout NUMERIC DEFAULT 0.00;
+ALTER TABLE public.spotify_analytics ADD COLUMN IF NOT EXISTS currency TEXT DEFAULT 'IDR';
+
+-- ============================================================
+-- TYPE SAFETY — Pastikan kolom ID adalah UUID
+-- ============================================================
+DO $$ 
+BEGIN 
+    BEGIN ALTER TABLE public.profiles ALTER COLUMN id TYPE UUID USING id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.releases ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.royalties_ledger ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.transactions ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.spotify_distributions ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.spotify_analytics ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.delivery_queue ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+    BEGIN ALTER TABLE public.distribution_logs ALTER COLUMN user_id TYPE UUID USING user_id::UUID; EXCEPTION WHEN OTHERS THEN NULL; END;
+END $$;
 
 -- Hapus kolom Midtrans yang tidak dipakai lagi (opsional, comment out jika masih butuh)
 -- ALTER TABLE public.transactions DROP COLUMN IF EXISTS midtrans_order_id;
@@ -326,17 +357,17 @@ ALTER TABLE public.distribution_logs ENABLE ROW LEVEL SECURITY;
 -- ============================================================
 
 CREATE POLICY "Users can view their own profile" ON public.profiles
-FOR SELECT USING (auth.uid() = id);
+FOR SELECT USING (auth.uid()::text = id::text);
 
 CREATE POLICY "Users can update their own profile" ON public.profiles
-FOR UPDATE USING (auth.uid() = id);
+FOR UPDATE USING (auth.uid()::text = id::text);
 
 -- ============================================================
 -- RLS POLICIES — RELEASES
 -- ============================================================
 
 CREATE POLICY "Users can view their own releases" ON public.releases
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 -- Backend (service_role) akan insert releases, bukan user langsung
 -- INSERT handled by backend with service_role key
@@ -346,14 +377,14 @@ FOR SELECT USING (auth.uid() = user_id);
 -- ============================================================
 
 CREATE POLICY "Users can view their own transactions" ON public.transactions
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 -- ============================================================
 -- RLS POLICIES — ROYALTIES
 -- ============================================================
 
 CREATE POLICY "Users can view their own royalties" ON public.royalties_ledger
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 -- ============================================================
 -- RLS POLICIES — STORE ANALYTICS
@@ -364,7 +395,7 @@ FOR SELECT USING (
     EXISTS (
         SELECT 1 FROM public.releases
         WHERE releases.id = store_analytics.release_id
-          AND releases.user_id = auth.uid()
+          AND releases.user_id::text = auth.uid()::text
     )
 );
 
@@ -377,9 +408,9 @@ FOR SELECT USING (
     EXISTS (
         SELECT 1 FROM public.releases
         WHERE releases.id = release_splits.release_id
-          AND releases.user_id = auth.uid()
+          AND releases.user_id::text = auth.uid()::text
     )
-    OR email = (SELECT email FROM auth.users WHERE id = auth.uid())
+    OR email = (SELECT email FROM auth.users WHERE id::text = auth.uid()::text)
 );
 
 -- ============================================================
@@ -387,22 +418,22 @@ FOR SELECT USING (
 -- ============================================================
 
 CREATE POLICY "Users can view own distributions" ON public.spotify_distributions
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 CREATE POLICY "Users can view own analytics" ON public.spotify_analytics
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 CREATE POLICY "Users can view own artist commissions" ON public.artist_commissions
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 -- Admin commissions hanya bisa dilihat service role (backend)
 -- tidak perlu policy karena backend pakai service_role key
 
 CREATE POLICY "Users can view own delivery queue" ON public.delivery_queue
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 CREATE POLICY "Users can view own distribution logs" ON public.distribution_logs
-FOR SELECT USING (auth.uid() = user_id);
+FOR SELECT USING (auth.uid()::text = user_id::text);
 
 -- ============================================================
 -- INDEXES — PERFORMA

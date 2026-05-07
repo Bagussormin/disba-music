@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "description": "Disba Music Aggregator Backend — DDEX ERN 4.1",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node server.js",
@@ -15,6 +15,7 @@
     "axios": "^1.7.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "ws": "^8.20.0"
   }
 }
