@@ -310,7 +310,7 @@ const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminCli
                 Voted #1 Nightlife Platform
               </div>
               
-              <h2 className="text-6xl md:text-[7rem] font-black tracking-tighter leading-[0.9] text-white uppercase italic animate-slide-up">
+              <h2 className="text-5xl md:text-[7rem] font-black tracking-tighter leading-tight text-white uppercase italic animate-slide-up py-4">
                 Discover <br />
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600 text-glow-blue">Who Runs</span> <br />
                 The Night.
