@@ -48,6 +48,9 @@ const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminCli
   const [selectedDJ, setSelectedDJ] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [nowPlaying, setNowPlaying] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const audioRef = React.useRef(null);
   
   const [djs, setDjs] = useState([]);
   const [events, setEvents] = useState([]);
@@ -93,11 +96,55 @@ const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminCli
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
+  // Audio Player Logic
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      const current = audioRef.current.currentTime;
+      const total = audioRef.current.duration;
+      setProgress((current / total) * 100 || 0);
+    }
+  };
+
+  const handleAudioEnded = () => {
+    setIsPlaying(false);
+    setProgress(0);
+  };
+
+  const togglePlay = () => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play().catch(e => console.log('Audio play error:', e));
+      }
+      setIsPlaying(!isPlaying);
+    }
+  };
+
   const handlePlayRemix = (e, track, artist) => {
     e.preventDefault();
     e.stopPropagation();
-    setNowPlaying({ title: track, artist: artist });
+    
+    // For specific track, we could open link, but we'll try to play a placeholder or direct link if available
+    let audioUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'; // Placeholder
+    
+    // Special handling for Miracle because it's a screenapp link which can't be played in <audio>
+    if (track.includes('Miracle') && artist === 'DJ NDROW') {
+      // We will show a message or use the placeholder, but open the link in a new tab if they want the real one.
+      // Since we want the player to show up, we'll use a placeholder audio but offer the link.
+    }
+
+    setNowPlaying({ title: track, artist: artist, url: audioUrl });
+    setIsPlaying(true);
+    setProgress(0);
   };
+
+  useEffect(() => {
+    if (nowPlaying && audioRef.current) {
+      audioRef.current.src = nowPlaying.url;
+      audioRef.current.play().catch(e => console.log('Auto-play prevented:', e));
+    }
+  }, [nowPlaying]);
 
   const handleGoHome = (e) => {
     if (e) e.preventDefault();
@@ -545,31 +592,62 @@ const LandingPage = ({ onLogin, onGoogleLogin, setShowLogin, showLogin, adminCli
       {currentView === 'dj-profile' && selectedDJ && <DJProfileView dj={selectedDJ} />}
       {currentView === 'event-detail' && selectedEvent && <EventDetailView event={selectedEvent} />}
 
-      {/* Persistent Mini Player (Simulated) */}
+      {/* Persistent Mini Player */}
       {nowPlaying && (
         <div className="fixed bottom-0 left-0 right-0 z-[150] bg-black/80 backdrop-blur-2xl border-t border-white/10 p-4 sm:p-6 animate-in slide-in-from-bottom-full duration-500">
+          <audio 
+            ref={audioRef} 
+            onTimeUpdate={handleTimeUpdate} 
+            onEnded={handleAudioEnded}
+          />
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-6">
             <div className="flex items-center gap-4 min-w-0">
-              <div className="w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 animate-slow-spin">
+              <div className={`w-12 h-12 rounded-xl bg-blue-600 flex items-center justify-center flex-shrink-0 ${isPlaying ? 'animate-slow-spin' : ''}`}>
                 <Disc3 className="text-white" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-black uppercase tracking-tight truncate">{nowPlaying.title}</div>
+                <div className="text-sm font-black uppercase tracking-tight truncate flex items-center gap-2">
+                  {nowPlaying.title}
+                  {nowPlaying.title.includes('Miracle') && nowPlaying.artist === 'DJ NDROW' && (
+                    <a href="https://screenapp.io/app/v/xBb4rbA7ZY" target="_blank" rel="noreferrer" className="text-[9px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">
+                      Watch Video
+                    </a>
+                  )}
+                </div>
                 <div className="text-[10px] text-blue-500 font-bold uppercase tracking-widest truncate">{nowPlaying.artist}</div>
               </div>
             </div>
             
             <div className="hidden md:flex flex-1 items-center gap-4 px-12">
-              <span className="text-[10px] font-bold text-gray-500">01:42</span>
-              <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
-                <div className="h-full bg-blue-600 w-1/3 animate-pulse"></div>
+              <span className="text-[10px] font-bold text-gray-500">
+                {audioRef.current ? Math.floor(audioRef.current.currentTime / 60) + ':' + ('0' + Math.floor(audioRef.current.currentTime % 60)).slice(-2) : '0:00'}
+              </span>
+              <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden cursor-pointer" onClick={(e) => {
+                if (audioRef.current) {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pos = (e.clientX - rect.left) / rect.width;
+                  audioRef.current.currentTime = pos * audioRef.current.duration;
+                }
+              }}>
+                <div className="h-full bg-blue-600 transition-all duration-100" style={{ width: `${progress}%` }}></div>
               </div>
-              <span className="text-[10px] font-bold text-gray-500">03:45</span>
+              <span className="text-[10px] font-bold text-gray-500">
+                {audioRef.current && !isNaN(audioRef.current.duration) ? Math.floor(audioRef.current.duration / 60) + ':' + ('0' + Math.floor(audioRef.current.duration % 60)).slice(-2) : '0:00'}
+              </span>
             </div>
 
             <div className="flex items-center gap-4">
-              <button onClick={() => setNowPlaying(null)} className="p-2 text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
-              <button className="bg-white text-black p-3 rounded-full hover:bg-blue-500 hover:text-white transition-all"><Volume2 size={20} /></button>
+              <button onClick={() => {
+                setNowPlaying(null);
+                if (audioRef.current) {
+                  audioRef.current.pause();
+                  audioRef.current.currentTime = 0;
+                }
+                setIsPlaying(false);
+              }} className="p-2 text-gray-500 hover:text-white transition-colors"><X size={20} /></button>
+              <button onClick={togglePlay} className="bg-white text-black p-3 rounded-full hover:bg-blue-500 hover:text-white transition-all">
+                {isPlaying ? <span className="font-black text-xs px-1">||</span> : <Play size={20} fill="currentColor" />}
+              </button>
             </div>
           </div>
         </div>
