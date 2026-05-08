@@ -463,9 +463,9 @@ function App() {
             {/* Quick Stats Grid */}
             <div className="grid md:grid-cols-4 gap-6">
               {[
-                { label: 'Total Streams', value: '1.2M', icon: Activity, color: 'text-blue-500', trend: '+12%' },
+                { label: 'Total Streams', value: allRoyalties.reduce((sum, r) => sum + (r.streams || 0), 0).toLocaleString(), icon: Activity, color: 'text-blue-500', trend: 'Lifetime' },
                 { label: 'Royalties Earned', value: `Rp ${(profile.wallet_balance || 0).toLocaleString('id-ID')}`, icon: DollarSign, color: 'text-green-500', trend: 'Monthly' },
-                { label: 'Global Reaches', value: '142', icon: Disc3, color: 'text-purple-500', trend: 'Countries' },
+                { label: 'Global Reaches', value: allReleases.filter(r => r.spotify_status === 'live' || r.spotify_status === 'distributed').length > 0 ? 'Active' : 'Pending', icon: Disc3, color: 'text-purple-500', trend: 'Status' },
                 { label: 'Active Releases', value: allReleases.length, icon: Music, color: 'text-indigo-500', trend: 'All Stores' }
               ].map((stat, i) => (
                 <div key={i} className="bg-white/[0.02] border border-white/[0.05] p-8 rounded-[2.5rem] hover:bg-white/[0.04] transition-all group backdrop-blur-sm">
