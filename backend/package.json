@@ -7,7 +7,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "smoke:flows": "node smoke_api_flows.js"
   },
   "type": "module",
   "dependencies": {

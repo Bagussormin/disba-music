@@ -106,6 +106,46 @@ function sanitizeSplits(splits) {
     .filter(s => Number.isFinite(s.percentage) && s.percentage > 0 && s.percentage <= 100);
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function sanitizeLineup(lineup) {
+  if (Array.isArray(lineup)) {
+    return lineup.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+
+  if (typeof lineup === 'string') {
+    return lineup
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function sanitizeEventPayload(payload = {}) {
+  const title = String(payload.title || '').trim();
+  const venue = String(payload.venue || '').trim();
+  const date = String(payload.date || '').trim();
+  const description = String(payload.description || '').trim();
+  const price = String(payload.price || '').trim();
+  const status = String(payload.status || 'SELLING FAST').trim();
+  const color = String(payload.color || 'bg-orange-500').trim();
+  const image = payload.image ? String(payload.image).trim() : null;
+  const lineup = sanitizeLineup(payload.lineup);
+
+  if (!title || !venue || !date || !description || !price || lineup.length === 0) {
+    throw new Error('Data event belum lengkap. Mohon isi title, venue, date, description, price, dan lineup.');
+  }
+
+  return { title, venue, date, description, price, status, color, image, lineup };
+}
+
 function generateUpc() {
   const base = `8804821${Math.floor(Math.random() * 9999).toString().padStart(4, '0')}0`;
   const digits = base.split('').map(Number);
@@ -130,6 +170,104 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================================
+// PUBLIC LANDING CONTENT
+// ============================================================
+
+app.get('/api/landing', async (req, res) => {
+  try {
+    const [{ data: djs, error: djsError }, { data: events, error: eventsError }] = await Promise.all([
+      supabase.from('djs').select('*').order('rank', { ascending: true }),
+      supabase.from('events').select('*').order('created_at', { ascending: false })
+    ]);
+
+    if (djsError) throw new Error(djsError.message);
+    if (eventsError) throw new Error(eventsError.message);
+
+    const trackTitles = [...new Set((djs || []).flatMap((dj) => dj.recent_tracks || []).filter(Boolean))];
+    let releases = [];
+
+    if (trackTitles.length > 0) {
+      const { data: releasesData, error: releasesError } = await supabase
+        .from('releases')
+        .select('title, audio_url, cover_url, status, spotify_status')
+        .not('audio_url', 'is', null)
+        .in('title', trackTitles);
+
+      if (releasesError) throw new Error(releasesError.message);
+      releases = releasesData || [];
+    }
+
+    const releaseMap = new Map(releases.map((release) => [normalizeText(release.title), release]));
+
+    const mappedDjs = (djs || []).map((dj) => ({
+      ...dj,
+      recent_tracks: (dj.recent_tracks || []).map((trackTitle) => {
+        const exactMatch = releaseMap.get(normalizeText(trackTitle));
+        const fallbackMatch = releases.find((release) => normalizeText(release.title).includes(normalizeText(trackTitle)));
+        const match = exactMatch || fallbackMatch || null;
+
+        return {
+          title: trackTitle,
+          audio_url: match?.audio_url || null,
+          cover_url: match?.cover_url || null,
+          release_status: match?.spotify_status || match?.status || null
+        };
+      })
+    }));
+
+    res.json({
+      djs: mappedDjs,
+      events: events || []
+    });
+  } catch (error) {
+    console.error('Landing content error:', error);
+    res.status(500).json({ error: 'Gagal memuat landing content.' });
+  }
+});
+
+app.get('/api/public/releases/:releaseId', async (req, res) => {
+  try {
+    const { data: release, error: releaseError } = await supabase
+      .from('releases')
+      .select('id, user_id, title, genre, audio_url, cover_url, isrc, upc, status, spotify_status, created_at')
+      .eq('id', req.params.releaseId)
+      .eq('status', 'released')
+      .maybeSingle();
+
+    if (releaseError) throw new Error(releaseError.message);
+    if (!release) {
+      return res.status(404).json({ error: 'Release publik tidak ditemukan.' });
+    }
+
+    const { data: ownerProfile, error: profileError } = await supabase
+      .from('profiles')
+      .select('full_name, artist_stage_name')
+      .eq('id', release.user_id)
+      .maybeSingle();
+
+    if (profileError) throw new Error(profileError.message);
+
+    res.json({
+      release: {
+        id: release.id,
+        title: release.title,
+        genre: release.genre,
+        audio_url: release.audio_url,
+        cover_url: release.cover_url,
+        isrc: release.isrc,
+        upc: release.upc,
+        spotify_status: release.spotify_status,
+        created_at: release.created_at,
+        artistName: ownerProfile?.artist_stage_name || ownerProfile?.full_name || 'Disba Artist'
+      }
+    });
+  } catch (error) {
+    console.error('Public release fetch error:', error);
+    res.status(500).json({ error: 'Gagal memuat release publik.' });
+  }
+});
+
+// ============================================================
 // ADMIN DASHBOARD
 // ============================================================
 
@@ -140,16 +278,18 @@ app.get('/api/admin/dashboard', requireAuth, requireAdmin, async (req, res) => {
       { data: releases },
       { data: transactions },
       { data: royalties },
-      { data: deliveryQueue }
+      { data: deliveryQueue },
+      { data: events }
     ] = await Promise.all([
       supabase.from('profiles').select('*').order('created_at', { ascending: false }),
       supabase.from('releases').select('*').order('created_at', { ascending: false }),
       supabase.from('transactions').select('*').order('created_at', { ascending: false }),
       supabase.from('royalties_ledger').select('*, releases(title)').order('created_at', { ascending: false }),
-      supabase.from('delivery_queue').select('*, releases(title, isrc, upc)').order('created_at', { ascending: false }).limit(50)
+      supabase.from('delivery_queue').select('*, releases(title, isrc, upc)').order('created_at', { ascending: false }).limit(50),
+      supabase.from('events').select('*').order('created_at', { ascending: false })
     ]);
 
-    res.json({ users, releases, transactions, royalties, deliveryQueue });
+    res.json({ users, releases, transactions, royalties, deliveryQueue, events });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -465,6 +605,39 @@ app.post('/api/admin/royalties/input', requireAuth, requireAdmin, async (req, re
 // ADMIN — USER & RELEASE MANAGEMENT
 // ============================================================
 
+app.patch('/api/profile', requireAuth, async (req, res) => {
+  try {
+    const allowedUpdates = {};
+    const allowedFields = ['full_name', 'artist_stage_name', 'label_name', 'whatsapp', 'instagram', 'bank_account', 'bank_name'];
+
+    for (const field of allowedFields) {
+      if (typeof req.body?.[field] === 'string') {
+        allowedUpdates[field] = req.body[field].trim();
+      }
+    }
+
+    if (Object.keys(allowedUpdates).length === 0) {
+      return res.status(400).json({ error: 'Tidak ada data profil yang dapat diperbarui.' });
+    }
+
+    allowedUpdates.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(allowedUpdates)
+      .eq('id', req.user.id)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    res.json({ message: 'Profil berhasil diperbarui.', profile: data });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.patch('/api/admin/users/:userId', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -491,6 +664,70 @@ app.patch('/api/admin/users/:userId', requireAuth, requireAdmin, async (req, res
 
     res.json({ message: 'User berhasil diperbarui.' });
   } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.get('/api/admin/events', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw new Error(error.message);
+
+    res.json({ events: data || [] });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/events', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const payload = sanitizeEventPayload(req.body);
+    const { data, error } = await supabase
+      .from('events')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    res.status(201).json({ message: 'Event berhasil dibuat.', event: data });
+  } catch (error) {
+    console.error('Create event error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.patch('/api/admin/events/:eventId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const payload = sanitizeEventPayload(req.body);
+    const { data, error } = await supabase
+      .from('events')
+      .update(payload)
+      .eq('id', req.params.eventId)
+      .select('*')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    res.json({ message: 'Event berhasil diperbarui.', event: data });
+  } catch (error) {
+    console.error('Update event error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/admin/events/:eventId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { error } = await supabase.from('events').delete().eq('id', req.params.eventId);
+    if (error) throw new Error(error.message);
+
+    res.json({ message: 'Event berhasil dihapus.' });
+  } catch (error) {
+    console.error('Delete event error:', error);
     res.status(400).json({ error: error.message });
   }
 });

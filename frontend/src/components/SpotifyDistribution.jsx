@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Upload, Music, Globe, TrendingUp, CheckCircle, Clock,
   AlertCircle, Loader2, Radio, ChevronDown, ChevronUp,
@@ -38,7 +38,14 @@ function StatusBadge({ status }) {
   );
 }
 
-export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onDataRefresh }) {
+export function SpotifyDistribution({
+  releases = [],
+  apiUrl,
+  accessToken,
+  onDataRefresh,
+  onNotify,
+  onConfirm
+}) {
   const [platforms, setPlatforms] = useState([]);
   const [selectedPlatforms, setSelectedPlatforms] = useState(['spotify']);
   const [submitting, setSubmitting] = useState(null);
@@ -47,11 +54,7 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
   const [queueMap, setQueueMap] = useState({});
   const [loadingAnalytics, setLoadingAnalytics] = useState({});
 
-  useEffect(() => {
-    fetchPlatforms();
-  }, []);
-
-  const fetchPlatforms = async () => {
+  const fetchPlatforms = useCallback(async () => {
     try {
       const res = await fetch(`${apiUrl}/api/distribution/platforms`, {
         headers: { Authorization: `Bearer ${accessToken}` }
@@ -64,7 +67,11 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
       // fallback: use static list
       setPlatforms(Object.keys(PLATFORM_DISPLAY).map(id => ({ id, name: PLATFORM_DISPLAY[id].name })));
     }
-  };
+  }, [accessToken, apiUrl]);
+
+  useEffect(() => {
+    fetchPlatforms();
+  }, [fetchPlatforms]);
 
   const togglePlatform = (platformId) => {
     setSelectedPlatforms(prev =>
@@ -76,10 +83,21 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
 
   const handleSubmitDistribution = async (release) => {
     if (selectedPlatforms.length === 0) {
-      alert('Pilih minimal 1 platform tujuan distribusi.');
+      onNotify?.({
+        title: 'Pilih platform distribusi',
+        description: 'Minimal 1 platform tujuan harus dipilih sebelum submit.',
+        variant: 'error'
+      });
       return;
     }
-    if (!window.confirm(`Distribusikan "${release.title}" ke ${selectedPlatforms.map(p => PLATFORM_DISPLAY[p]?.name || p).join(', ')}?\n\nKomisi Disba Music: 15% dari royalti.\nProses review oleh admin: 1-2 hari kerja.`)) return;
+
+    const confirmed = await (onConfirm?.({
+      title: 'Submit distribusi release ini?',
+      description: `Track "${release.title}" akan dikirim ke ${selectedPlatforms.map((platform) => PLATFORM_DISPLAY[platform]?.name || platform).join(', ')}. Komisi Disba Music 15% dari royalti.`,
+      confirmLabel: 'Submit Distribusi'
+    }) ?? Promise.resolve(true));
+
+    if (!confirmed) return;
 
     setSubmitting(release.id);
     try {
@@ -91,11 +109,19 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Gagal submit distribusi.');
 
-      alert(`✅ ${data.message}`);
+      onNotify?.({
+        title: 'Distribusi berhasil diajukan',
+        description: data.message,
+        variant: 'success'
+      });
       if (onDataRefresh) onDataRefresh();
       await loadReleaseStatus(release.id);
     } catch (err) {
-      alert(`❌ ${err.message}`);
+      onNotify?.({
+        title: 'Submit distribusi gagal',
+        description: err.message,
+        variant: 'error'
+      });
     } finally {
       setSubmitting(null);
     }
@@ -129,7 +155,13 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
 
   const totalDistributed = releases.filter(r => r.spotify_status === 'distributed' || r.spotify_status === 'live').length;
   const totalStreams = Object.values(analyticsMap).reduce((sum, d) => sum + (d?.summary?.totalStreams || 0), 0);
-  const totalEarnings = Object.values(analyticsMap).reduce((sum, d) => sum + (d?.summary?.totalRevenue || 0), 0);
+  const platformOptions = platforms.length > 0
+    ? platforms.map((platform) => ({
+        id: platform.id,
+        name: platform.name,
+        emoji: PLATFORM_DISPLAY[platform.id]?.emoji || '🎵'
+      }))
+    : Object.entries(PLATFORM_DISPLAY).map(([id, cfg]) => ({ id, name: cfg.name, emoji: cfg.emoji }));
 
   return (
     <div className="space-y-8">
@@ -169,19 +201,19 @@ export function SpotifyDistribution({ releases = [], apiUrl, accessToken, onData
           🎯 Pilih Target Platform Distribusi
         </p>
         <div className="flex flex-wrap gap-2">
-          {Object.entries(PLATFORM_DISPLAY).map(([id, cfg]) => {
-            const selected = selectedPlatforms.includes(id);
+          {platformOptions.map((platform) => {
+            const selected = selectedPlatforms.includes(platform.id);
             return (
               <button
-                key={id}
-                onClick={() => togglePlatform(id)}
+                key={platform.id}
+                onClick={() => togglePlatform(platform.id)}
                 className={`px-4 py-2 rounded-xl text-[11px] font-bold transition-all border ${
                   selected
                     ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
                     : 'bg-white/5 border-white/10 text-gray-500 hover:text-white hover:border-white/20'
                 }`}
               >
-                {cfg.emoji} {cfg.name}
+                {platform.emoji} {platform.name}
               </button>
             );
           })}
